@@ -1229,6 +1229,8 @@ config I2C_MULTI_INSTANTIATE
 	  To compile this driver as a module, choose M here: the module
 	  will be called i2c-multi-instantiate.
 
+source "drivers/platform/x86/intel_sgx/Kconfig"
+
 endif # X86_PLATFORM_DEVICES
 
 config PMC_ATOM
