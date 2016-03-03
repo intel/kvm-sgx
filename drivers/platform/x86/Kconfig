@@ -1218,6 +1218,8 @@ config INTEL_CHTDC_TI_PWRBTN
 	  To compile this driver as a module, choose M here: the module
 	  will be called intel_chtdc_ti_pwrbtn.
 
+source "drivers/platform/x86/intel_sgx/Kconfig"
+
 endif # X86_PLATFORM_DEVICES
 
 config PMC_ATOM
