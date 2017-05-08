@@ -123,13 +123,6 @@ struct sgx_encl_page {
 	unsigned int va_offset;
 };
 
-struct sgx_tgid_ctx {
-	struct pid *tgid;
-	struct kref refcount;
-	struct list_head encl_list;
-	struct list_head list;
-};
-
 enum sgx_encl_flags {
 	SGX_ENCL_INITIALIZED	= BIT(0),
 	SGX_ENCL_DEBUG		= BIT(1),
@@ -145,6 +138,7 @@ struct sgx_encl {
 	unsigned int secs_child_cnt;
 	struct mutex lock;
 	struct mm_struct *mm;
+	struct pid *tgid;
 	struct file *backing;
 	struct file *pcmd;
 	struct kref refcount;
@@ -156,7 +150,6 @@ struct sgx_encl {
 	struct list_head add_page_reqs;
 	struct work_struct add_page_work;
 	struct sgx_encl_page secs;
-	struct sgx_tgid_ctx *tgid_ctx;
 	struct list_head encl_list;
 	struct mmu_notifier mmu_notifier;
 };
@@ -185,7 +178,7 @@ extern const struct vm_operations_struct sgx_vm_ops;
 
 #define sgx_pr_ratelimited(level, encl, fmt, ...)			  \
 	pr_ ## level ## _ratelimited("intel_sgx: [%d:0x%p] " fmt,	  \
-				     pid_nr((encl)->tgid_ctx->tgid),	  \
+				     pid_nr((encl)->tgid),	  	  \
 				     (void *)(encl)->base, ##__VA_ARGS__)
 
 #define sgx_dbg(encl, fmt, ...) \
@@ -235,12 +228,11 @@ struct sgx_encl_page *sgx_fault_page(struct vm_area_struct *vma,
 				     unsigned long addr,
 				     unsigned int flags);
 
-
 int sgx_get_key_hash(struct crypto_shash *tfm, const void *modulus, void *hash);
 int sgx_get_key_hash_simple(const void *modulus, void *hash);
 
-extern struct mutex sgx_tgid_ctx_mutex;
-extern struct list_head sgx_tgid_ctx_list;
+extern struct mutex sgx_encl_mutex;
+extern struct list_head sgx_encl_list;
 extern atomic_t sgx_va_pages_cnt;
 
 int sgx_add_epc_bank(resource_size_t start, unsigned long size, int bank);

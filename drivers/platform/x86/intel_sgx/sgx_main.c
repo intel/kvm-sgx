@@ -191,15 +191,12 @@ const struct file_operations sgx_fops = {
 
 static int sgx_pm_suspend(struct device *dev)
 {
-	struct sgx_tgid_ctx *ctx;
 	struct sgx_encl *encl;
 
-	list_for_each_entry(ctx, &sgx_tgid_ctx_list, list) {
-		list_for_each_entry(encl, &ctx->encl_list, encl_list) {
-			sgx_invalidate(encl, false);
-			encl->flags |= SGX_ENCL_SUSPEND;
-			flush_work(&encl->add_page_work);
-		}
+	list_for_each_entry(encl, &sgx_encl_list, encl_list) {
+		sgx_invalidate(encl, false);
+		encl->flags |= SGX_ENCL_SUSPEND;
+		flush_work(&encl->add_page_work);
 	}
 
 	return 0;
