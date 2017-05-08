@@ -110,66 +110,6 @@ int sgx_encl_find(struct mm_struct *mm, unsigned long addr,
 	return encl ? 0 : -ENOENT;
 }
 
-static struct sgx_tgid_ctx *sgx_find_tgid_ctx(struct pid *tgid)
-{
-	struct sgx_tgid_ctx *ctx;
-
-	list_for_each_entry(ctx, &sgx_tgid_ctx_list, list)
-		if (pid_nr(ctx->tgid) == pid_nr(tgid))
-			return ctx;
-
-	return NULL;
-}
-
-static int sgx_add_to_tgid_ctx(struct sgx_encl *encl)
-{
-	struct sgx_tgid_ctx *ctx;
-	struct pid *tgid = get_pid(task_tgid(current));
-
-	mutex_lock(&sgx_tgid_ctx_mutex);
-
-	ctx = sgx_find_tgid_ctx(tgid);
-	if (ctx) {
-		if (kref_get_unless_zero(&ctx->refcount)) {
-			encl->tgid_ctx = ctx;
-			mutex_unlock(&sgx_tgid_ctx_mutex);
-			put_pid(tgid);
-			return 0;
-		} else {
-			list_del_init(&ctx->list);
-		}
-	}
-
-	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
-	if (!ctx) {
-		mutex_unlock(&sgx_tgid_ctx_mutex);
-		put_pid(tgid);
-		return -ENOMEM;
-	}
-
-	ctx->tgid = tgid;
-	kref_init(&ctx->refcount);
-	INIT_LIST_HEAD(&ctx->encl_list);
-
-	list_add(&ctx->list, &sgx_tgid_ctx_list);
-
-	encl->tgid_ctx = ctx;
-
-	mutex_unlock(&sgx_tgid_ctx_mutex);
-	return 0;
-}
-
-void sgx_tgid_ctx_release(struct kref *ref)
-{
-	struct sgx_tgid_ctx *pe =
-		container_of(ref, struct sgx_tgid_ctx, refcount);
-	mutex_lock(&sgx_tgid_ctx_mutex);
-	list_del(&pe->list);
-	mutex_unlock(&sgx_tgid_ctx_mutex);
-	put_pid(pe->tgid);
-	kfree(pe);
-}
-
 static int sgx_measure(struct sgx_epc_page *secs_page,
 		       struct sgx_epc_page *epc_page,
 		       u16 mrmask)
@@ -541,6 +481,7 @@ static struct sgx_encl *sgx_encl_alloc(struct sgx_secs *secs)
 	INIT_WORK(&encl->add_page_work, sgx_add_page_worker);
 
 	encl->mm = current->mm;
+	encl->tgid = get_pid(task_tgid(current));
 	encl->base = secs->base;
 	encl->size = secs->size;
 	encl->ssaframesize = secs->ssaframesize;
@@ -583,10 +524,6 @@ int sgx_encl_create(struct sgx_secs *secs)
 	}
 
 	encl->secs.epc_page = secs_epc;
-
-	ret = sgx_add_to_tgid_ctx(encl);
-	if (ret)
-		goto out;
 
 	ret = sgx_init_page(encl, &encl->secs, encl->base + encl->size, 0);
 	if (ret)
@@ -641,9 +578,9 @@ int sgx_encl_create(struct sgx_secs *secs)
 	vma->vm_private_data = encl;
 	up_read(&current->mm->mmap_sem);
 
-	mutex_lock(&sgx_tgid_ctx_mutex);
-	list_add_tail(&encl->encl_list, &encl->tgid_ctx->encl_list);
-	mutex_unlock(&sgx_tgid_ctx_mutex);
+	mutex_lock(&sgx_encl_mutex);
+	list_add_tail(&encl->encl_list, &sgx_encl_list);
+	mutex_unlock(&sgx_encl_mutex);
 
 	return 0;
 out:
@@ -959,10 +896,9 @@ void sgx_encl_release(struct kref *ref)
 	struct radix_tree_iter iter;
 	void **slot;
 
-	mutex_lock(&sgx_tgid_ctx_mutex);
-	if (!list_empty(&encl->encl_list))
-		list_del(&encl->encl_list);
-	mutex_unlock(&sgx_tgid_ctx_mutex);
+	mutex_lock(&sgx_encl_mutex);
+	list_del(&encl->encl_list);
+	mutex_unlock(&sgx_encl_mutex);
 
 	if (encl->mmu_notifier.ops)
 		mmu_notifier_unregister_no_release(&encl->mmu_notifier,
@@ -988,8 +924,8 @@ void sgx_encl_release(struct kref *ref)
 	if (encl->secs.epc_page)
 		sgx_free_page(encl->secs.epc_page, encl);
 
-	if (encl->tgid_ctx)
-		kref_put(&encl->tgid_ctx->refcount, sgx_tgid_ctx_release);
+	if (encl->tgid)
+		put_pid(encl->tgid);
 
 	if (encl->backing)
 		fput(encl->backing);
