@@ -74,8 +74,8 @@ static DEFINE_SPINLOCK(sgx_free_list_lock);
 static LIST_HEAD(sgx_global_lru);
 static DEFINE_SPINLOCK(sgx_global_lru_lock);
 
-LIST_HEAD(sgx_tgid_ctx_list);
-DEFINE_MUTEX(sgx_tgid_ctx_mutex);
+LIST_HEAD(sgx_encl_list);
+DEFINE_MUTEX(sgx_encl_mutex);
 atomic_t sgx_va_pages_cnt = ATOMIC_INIT(0);
 static unsigned int sgx_nr_total_epc_pages;
 static unsigned int sgx_nr_free_pages;
