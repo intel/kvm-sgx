@@ -4,6 +4,8 @@
 #ifndef _ASM_X86_INTEL_SGX_H
 #define _ASM_X86_INTEL_SGX_H
 
+struct sgx_epc_cgroup;
+
 struct sgx_epc_lru {
 	spinlock_t lock;
 	struct list_head reclaimable;
@@ -19,13 +21,19 @@ static inline void sgx_lru_init(struct sgx_epc_lru *lru)
 
 struct sgx_epc_reclaim_control {
 	int nr_pages;
+	int nr_fails;
+	bool ignore_age;
+	struct sgx_epc_cgroup *epc_cg;
 };
 
 static inline
 void sgx_epc_reclaim_control_init(struct sgx_epc_reclaim_control *rc,
-				  int nr_pages)
+				  struct sgx_epc_cgroup *epc_cg, int nr_pages)
 {
 	rc->nr_pages = nr_pages;
+	rc->nr_fails = 0;
+	rc->ignore_age = false;
+	rc->epc_cg = epc_cg;
 }
 
 int sgx_reclaim_pages(struct sgx_epc_reclaim_control *rc);

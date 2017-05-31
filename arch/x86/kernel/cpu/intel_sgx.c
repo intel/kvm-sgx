@@ -160,7 +160,7 @@ static inline void sgx_global_reclaim_pages(void)
 {
 	struct sgx_epc_reclaim_control rc;
 
-	sgx_epc_reclaim_control_init(&rc, SGX_NR_TO_SCAN);
+	sgx_epc_reclaim_control_init(&rc, NULL, SGX_NR_TO_SCAN);
 	sgx_reclaim_pages(&rc);
 }
 

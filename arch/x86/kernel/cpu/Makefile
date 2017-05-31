@@ -37,6 +37,7 @@ obj-$(CONFIG_CPU_SUP_UMC_32)		+= umc.o
 
 obj-$(CONFIG_INTEL_RDT)	+= intel_rdt.o intel_rdt_rdtgroup.o intel_rdt_monitor.o intel_rdt_ctrlmondata.o
 obj-$(CONFIG_INTEL_SGX_CORE)		+= intel_sgx.o
+obj-$(CONFIG_CGROUP_SGX_EPC) 		+= intel_sgx_epc_cgroup.o
 
 obj-$(CONFIG_X86_MCE)			+= mcheck/
 obj-$(CONFIG_MTRR)			+= mtrr/
