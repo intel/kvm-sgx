@@ -1073,6 +1073,18 @@ config CGROUP_BPF
 	  BPF_CGROUP_INET_INGRESS will be executed on the ingress path of
 	  inet sockets.
 
+config CGROUP_SGX_EPC
+	bool "Enclave Page Cache (EPC) controller for Intel SGX"
+	depends on INTEL_SGX && MEMCG
+	select PAGE_COUNTER
+	help
+	  Provides control over the EPC footprint of tasks in a cgroup.
+	  EPC is a subset of regular memory that is usable only by SGX
+	  enclaves and is very limited in quantity, e.g. less than 1%
+	  of total DRAM.
+
+          Say N if unsure.
+
 config CGROUP_DEBUG
 	bool "Debug controller"
 	default n
