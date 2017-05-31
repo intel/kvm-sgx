@@ -40,6 +40,7 @@ obj-$(CONFIG_INTEL_RDT)	+= intel_rdt_ctrlmondata.o intel_rdt_pseudo_lock.o
 CFLAGS_intel_rdt_pseudo_lock.o = -I$(src)
 
 obj-$(CONFIG_INTEL_SGX_CORE)		+= intel_sgx.o
+obj-$(CONFIG_CGROUP_SGX_EPC) 		+= intel_sgx_epc_cgroup.o
 
 obj-$(CONFIG_X86_MCE)			+= mcheck/
 obj-$(CONFIG_MTRR)			+= mtrr/
