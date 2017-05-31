@@ -61,6 +61,10 @@ SUBSYS(pids)
 SUBSYS(rdma)
 #endif
 
+#if IS_ENABLED(CONFIG_CGROUP_SGX_EPC)
+SUBSYS(sgx_epc)
+#endif
+
 /*
  * The following subsystems are not supported on the default hierarchy.
  */
