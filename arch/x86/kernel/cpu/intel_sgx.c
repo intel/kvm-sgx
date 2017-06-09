@@ -159,7 +159,7 @@ int sgx_reclaim_pages(struct sgx_epc_reclaim_control *rc)
 
 #ifdef CONFIG_CGROUP_SGX_EPC
 		if (epc_page->epc_cg) {
-			sgx_epc_cgroup_uncharge(epc_page->epc_cg, 1);
+			sgx_epc_cgroup_uncharge(epc_page->epc_cg, 1, true);
 			epc_page->epc_cg = NULL;
 		}
 #endif
@@ -365,7 +365,7 @@ struct sgx_epc_page *sgx_alloc_page(struct sgx_epc_page_impl *impl,
 		spin_unlock(&lru->lock);
 #ifdef CONFIG_CGROUP_SGX_EPC
 	} else {
-		sgx_epc_cgroup_uncharge(epc_cg, 1);
+		sgx_epc_cgroup_uncharge(epc_cg, 1, false);
 #endif
 	}
 
@@ -418,7 +418,7 @@ int __sgx_free_page(struct sgx_epc_page *page)
 
 #ifdef CONFIG_CGROUP_SGX_EPC
 	if (page->epc_cg) {
-		sgx_epc_cgroup_uncharge(page->epc_cg, 1);
+		sgx_epc_cgroup_uncharge(page->epc_cg, 1, false);
 		page->epc_cg = NULL;
 	}
 #endif
