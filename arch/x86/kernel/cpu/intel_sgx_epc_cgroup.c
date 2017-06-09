@@ -75,6 +75,44 @@ static struct sgx_epc_cgroup *parent_epc_cgroup(struct sgx_epc_cgroup *epc_cg)
 	return sgx_epc_cgroup_from_css(epc_cg->css.parent);
 }
 
+static inline unsigned long sgx_epc_cgroup_cnt_read(struct sgx_epc_cgroup *epc_cg,
+						    enum sgx_epc_cgroup_counter i)
+{
+	return atomic_long_read(&epc_cg->cnt[i]);
+}
+
+static inline void sgx_epc_cgroup_cnt_reset(struct sgx_epc_cgroup *epc_cg,
+					    enum sgx_epc_cgroup_counter i)
+{
+	atomic_long_set(&epc_cg->cnt[i], 0);
+}
+
+static inline void sgx_epc_cgroup_cnt_add(struct sgx_epc_cgroup *epc_cg,
+					  enum sgx_epc_cgroup_counter i,
+					  unsigned long cnt)
+{
+	atomic_long_add(cnt, &epc_cg->cnt[i]);
+}
+
+static inline void sgx_epc_cgroup_event(struct sgx_epc_cgroup *epc_cg,
+					enum sgx_epc_cgroup_counter i,
+					unsigned long cnt)
+{
+	sgx_epc_cgroup_cnt_add(epc_cg, i, cnt);
+
+	if (i == SGX_EPC_CGROUP_LOW ||
+	    i == SGX_EPC_CGROUP_HIGH ||
+	    i == SGX_EPC_CGROUP_MAX)
+		cgroup_file_notify(&epc_cg->events_file);
+}
+
+static inline void sgx_epc_cgroup_cnt_sub(struct sgx_epc_cgroup *epc_cg,
+					  enum sgx_epc_cgroup_counter i,
+					  unsigned long cnt)
+{
+	atomic_long_sub(cnt, &epc_cg->cnt[i]);
+}
+
 /**
  * sgx_epc_cgroup_iter - iterate over the EPC cgroup hierarchy
  * @root:	hierarchy root
@@ -368,7 +406,9 @@ retry:
                          */
                         if (!sgx_epc_cgroup_all_in_use_are_low(root))
                                 continue;
+			sgx_epc_cgroup_event(epc_cg, SGX_EPC_CGROUP_LOW, 1);
                 }
+		sgx_epc_cgroup_event(epc_cg, SGX_EPC_CGROUP_RECLAMATIONS, 1);
 
                 sgx_isolate_pages(&epc_cg->lru, &rc->nr_pages, dst);
                 if (!rc->nr_pages) {
@@ -383,8 +423,11 @@ retry:
 }
 
 static int sgx_epc_cgroup_reclaim_pages(unsigned long nr_pages,
-					struct sgx_epc_reclaim_control *rc)
+					struct sgx_epc_reclaim_control *rc,
+					enum sgx_epc_cgroup_counter c)
 {
+	sgx_epc_cgroup_event(rc->epc_cg, c, 1);
+
 	/*
 	 * Ensure sgx_reclaim_pages is called with a minimum and maximum
 	 * number of pages.  Attempting to reclaim only a few pages will
@@ -426,7 +469,8 @@ static inline void __sgx_epc_cgroup_reclaim_high(struct sgx_epc_cgroup *epc_cg)
 		if (cur <= high)
 			break;
 
-		if (!sgx_epc_cgroup_reclaim_pages(cur - high, &rc)) {
+		if (!sgx_epc_cgroup_reclaim_pages(cur - high, &rc,
+						  SGX_EPC_CGROUP_HIGH)) {
 			if (sgx_epc_cgroup_reclaim_failed(&rc))
 				break;
 		}
@@ -486,7 +530,8 @@ static void sgx_epc_cgroup_reclaim_work_func(struct work_struct *work)
 		if (cur <= max)
 			break;
 
-		if (!sgx_epc_cgroup_reclaim_pages(cur - max, &rc)) {
+		if (!sgx_epc_cgroup_reclaim_pages(cur - max, &rc,
+						  SGX_EPC_CGROUP_MAX)) {
 			if (sgx_epc_cgroup_reclaim_failed(&rc))
 				break;
 		}
@@ -532,7 +577,8 @@ static inline int __sgx_epc_cgroup_try_charge(struct sgx_epc_cgroup *epc_cg,
 		over = ((cur + nr_pages) > max) ?
 			(cur + nr_pages) - max : SGX_EPC_RECLAIM_MIN_PAGES;
 
-		if (!sgx_epc_cgroup_reclaim_pages(over, &rc)) {
+		if (!sgx_epc_cgroup_reclaim_pages(over, &rc,
+						  SGX_EPC_CGROUP_MAX)) {
 			if (sgx_epc_cgroup_reclaim_failed(&rc)) {
 				if (++nr_empty > SGX_EPC_RECLAIM_OOM_THRESHOLD)
 					return -ENOMEM;
@@ -582,8 +628,10 @@ int sgx_epc_cgroup_try_charge(struct mm_struct *mm,
 	ret = __sgx_epc_cgroup_try_charge(epc_cg, alloc_flags, nr_pages);
 	css_put(&epc_cg->css);
 
-	if (!ret)
+	if (!ret) {
 		*epc_cg_ptr = epc_cg;
+		sgx_epc_cgroup_cnt_add(epc_cg, SGX_EPC_CGROUP_PAGES, nr_pages);
+	}
 	return ret;
 }
 
@@ -593,12 +641,16 @@ int sgx_epc_cgroup_try_charge(struct mm_struct *mm,
  * @nr_pages:	the number of pages to uncharge
  */
 void sgx_epc_cgroup_uncharge(struct sgx_epc_cgroup *epc_cg,
-			     unsigned long nr_pages)
+			     unsigned long nr_pages, bool reclaimed)
 {
 	if (sgx_epc_cgroup_disabled())
 		return;
 
 	page_counter_uncharge(&epc_cg->pc, nr_pages);
+	sgx_epc_cgroup_cnt_sub(epc_cg, SGX_EPC_CGROUP_PAGES, nr_pages);
+	if (reclaimed)
+		sgx_epc_cgroup_event(epc_cg, SGX_EPC_CGROUP_RECLAIMED,
+				     nr_pages);
 
 	if (epc_cg != root_epc_cgroup)
 		css_put_many(&epc_cg->css, nr_pages);
@@ -663,6 +715,62 @@ static u64 sgx_epc_current_read(struct cgroup_subsys_state *css,
 
 	return (u64)page_counter_read(&epc_cg->pc) * PAGE_SIZE;
 }
+
+static int sgx_epc_stats_show(struct seq_file *m, void *v)
+{
+	struct sgx_epc_cgroup *epc_cg = sgx_epc_cgroup_from_css(seq_css(m));
+
+	unsigned long cur, dir, rec, recs;
+	cur = page_counter_read(&epc_cg->pc);
+	dir = sgx_epc_cgroup_cnt_read(epc_cg, SGX_EPC_CGROUP_PAGES);
+	rec = sgx_epc_cgroup_cnt_read(epc_cg, SGX_EPC_CGROUP_RECLAIMED);
+	recs= sgx_epc_cgroup_cnt_read(epc_cg, SGX_EPC_CGROUP_RECLAMATIONS);
+
+	seq_printf(m, "pages            %lu\n", cur);
+	seq_printf(m, "direct           %lu\n", dir);
+	seq_printf(m, "indirect         %lu\n", (cur - dir));
+	seq_printf(m, "reclaimed        %lu\n", rec);
+	seq_printf(m, "reclamations	%lu\n", recs);
+
+	return 0;
+}
+
+static ssize_t sgx_epc_stats_reset(struct kernfs_open_file *of,
+				   char *buf, size_t nbytes, loff_t off)
+{
+	struct sgx_epc_cgroup *epc_cg = sgx_epc_cgroup_from_css(of_css(of));
+	sgx_epc_cgroup_cnt_reset(epc_cg, SGX_EPC_CGROUP_RECLAIMED);
+	sgx_epc_cgroup_cnt_reset(epc_cg, SGX_EPC_CGROUP_RECLAMATIONS);
+	return nbytes;
+}
+
+
+static int sgx_epc_events_show(struct seq_file *m, void *v)
+{
+	struct sgx_epc_cgroup *epc_cg = sgx_epc_cgroup_from_css(seq_css(m));
+
+	unsigned long low, high, max;
+	low  = sgx_epc_cgroup_cnt_read(epc_cg, SGX_EPC_CGROUP_LOW);
+	high = sgx_epc_cgroup_cnt_read(epc_cg, SGX_EPC_CGROUP_HIGH);
+	max  = sgx_epc_cgroup_cnt_read(epc_cg, SGX_EPC_CGROUP_MAX);
+
+	seq_printf(m, "low      %lu\n", low);
+	seq_printf(m, "high     %lu\n", high);
+	seq_printf(m, "max      %lu\n", max);
+
+	return 0;
+}
+
+static ssize_t sgx_epc_events_reset(struct kernfs_open_file *of,
+				    char *buf, size_t nbytes, loff_t off)
+{
+	struct sgx_epc_cgroup *epc_cg = sgx_epc_cgroup_from_css(of_css(of));
+	sgx_epc_cgroup_cnt_reset(epc_cg, SGX_EPC_CGROUP_LOW);
+	sgx_epc_cgroup_cnt_reset(epc_cg, SGX_EPC_CGROUP_HIGH);
+	sgx_epc_cgroup_cnt_reset(epc_cg, SGX_EPC_CGROUP_MAX);
+	return nbytes;
+}
+
 
 static int sgx_epc_low_show(struct seq_file *m, void *v)
 {
@@ -732,7 +840,8 @@ static ssize_t sgx_epc_high_write(struct kernfs_open_file *of,
 		if (signal_pending(current))
 			break;
 
-		if (!sgx_epc_cgroup_reclaim_pages(cur - high, &rc)) {
+		if (!sgx_epc_cgroup_reclaim_pages(cur - high, &rc,
+						  SGX_EPC_CGROUP_HIGH)) {
 			if (sgx_epc_cgroup_reclaim_failed(&rc))
 				break;
 		}
@@ -781,7 +890,8 @@ static ssize_t sgx_epc_max_write(struct kernfs_open_file *of, char *buf,
 		if (signal_pending(current))
 			break;
 
-		if (!sgx_epc_cgroup_reclaim_pages(cur - max, &rc)) {
+		if (!sgx_epc_cgroup_reclaim_pages(cur - max, &rc,
+						  SGX_EPC_CGROUP_MAX)) {
 			if (sgx_epc_cgroup_reclaim_failed(&rc)) {
 				if (++nr_empty > SGX_EPC_RECLAIM_OOM_THRESHOLD)
 					sgx_epc_cgroup_oom(epc_cg);
@@ -797,6 +907,18 @@ static struct cftype sgx_epc_cgroup_files[] = {
 	{
 		.name = "current",
 		.read_u64 = sgx_epc_current_read,
+	},
+	{
+		.name = "stats",
+		.seq_show = sgx_epc_stats_show,
+		.write = sgx_epc_stats_reset,
+	},
+	{
+		.name = "events",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.file_offset = offsetof(struct sgx_epc_cgroup, events_file),
+		.seq_show = sgx_epc_events_show,
+		.write = sgx_epc_events_reset,
 	},
 	{
 		.name = "low",
