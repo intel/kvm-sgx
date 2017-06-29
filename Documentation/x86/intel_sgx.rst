@@ -176,6 +176,7 @@ SGX uapi
    :functions: sgx_ioc_enclave_create
                sgx_ioc_enclave_add_page
                sgx_ioc_enclave_init
+               sgx_ioc_enclave_mod_pages
 
 .. kernel-doc:: arch/x86/include/uapi/asm/sgx.h
 
