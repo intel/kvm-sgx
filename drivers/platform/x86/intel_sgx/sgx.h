@@ -179,6 +179,9 @@ int sgx_encl_add_page(struct sgx_encl *encl, unsigned long addr, void *data,
 		      struct sgx_secinfo *secinfo, unsigned int mrmask);
 int sgx_encl_init(struct sgx_encl *encl, struct sgx_sigstruct *sigstruct,
 		  struct sgx_einittoken *einittoken);
+int sgx_encl_modify_pages(struct sgx_encl *encl, unsigned long addr,
+			  unsigned long length, struct sgx_secinfo *secinfo,
+			  unsigned int op);
 void sgx_encl_block(struct sgx_encl_page *encl_page);
 void sgx_encl_track(struct sgx_encl *encl);
 int sgx_encl_load_page(struct sgx_encl_page *encl_page,

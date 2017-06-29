@@ -71,6 +71,8 @@
 	_IOW(SGX_MAGIC, 0x02, struct sgx_enclave_init)
 #define SGX_IOC_ENCLAVE_REMOVE_PAGES \
 	_IOW(SGX_MAGIC, 0x03, struct sgx_enclave_remove_pages)
+#define SGX_IOC_ENCLAVE_MODIFY_PAGES \
+	_IOW(SGX_MAGIC, 0x04, struct sgx_enclave_modify_pages)
 
 /* SGX leaf instruction return values */
 #define SGX_SUCCESS			0
@@ -146,5 +148,30 @@ struct sgx_enclave_remove_pages {
 	__u64	addr;
 	__u64	length;
 } __packed;
+
+/**
+ * enum sgx_enclave_modify_ops - page modification operations
+ * @SGX_ENCLAVE_MODIFY_PERMISSIONS:	change page permissions
+ * @SGX_ENCLAVE_MODIFY_TYPES:		change page type
+ */
+enum sgx_enclave_modify_ops {
+	SGX_ENCLAVE_MODIFY_PERMISSIONS	= 0,
+	SGX_ENCLAVE_MODIFY_TYPES	= 1,
+};
+
+/**
+ * struct sgx_enclave_modify_pages - parameter structure for the
+ *                                   %SGX_IOC_ENCLAVE_MOD_PAGES ioctl
+ * @addr:	address in the ELRANGE for the first page
+ * @length:	length of the address range (must be multiple of the page size)
+ * @secinfo:	address of the new SECINFO data
+ * @op:		a value of &sgx_enclave_modify_ops
+ */
+struct sgx_enclave_modify_pages {
+	__u64	addr;
+	__u64	length;
+	__u64	secinfo;
+	__u8	op;
+} __attribute__((__packed__));
 
 #endif /* _UAPI_ASM_X86_SGX_H */

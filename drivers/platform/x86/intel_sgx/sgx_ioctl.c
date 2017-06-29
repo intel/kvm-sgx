@@ -266,6 +266,45 @@ static long sgx_ioc_enclave_remove_pages(struct file *filep, unsigned int cmd,
 	return ret;
 }
 
+/**
+ * sgx_ioc_enclave_modify_pages - handler for %SGX_IOC_ENCLAVE_MODIFY_PAGES
+ *
+ * @filep:	open file to /dev/sgx
+ * @cmd:	the command value
+ * @arg:	pointer to the &sgx_enclave_modify_pages
+ *
+ * Modifies permissions or type for a range of pages. The enclave must
+ * acknowledge the modifications with EACCEPT.
+ *
+ * Return:
+ *   0 on success,
+ *   -errno otherwise
+ */
+static long sgx_ioc_enclave_modify_pages(struct file *filep, unsigned int cmd,
+					 unsigned long arg)
+{
+	struct sgx_enclave_modify_pages *params = (void *)arg;
+	struct sgx_secinfo secinfo;
+	struct sgx_encl *encl;
+	int ret;
+
+	if (!boot_cpu_has(X86_FEATURE_SGX2))
+		return -ENOIOCTLCMD;
+
+	if (copy_from_user(&secinfo, (void __user *)params->secinfo,
+			   sizeof(secinfo)))
+		return -EFAULT;
+
+	ret = sgx_encl_get(params->addr, &encl);
+	if (ret)
+		return ret;
+
+	ret = sgx_encl_modify_pages(encl, params->addr, params->length,
+				    &secinfo, params->op);
+	kref_put(&encl->refcount, sgx_encl_release);
+	return ret;
+}
+
 typedef long (*sgx_ioc_t)(struct file *filep, unsigned int cmd,
 			  unsigned long arg);
 
@@ -287,6 +326,9 @@ long sgx_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 		break;
 	case SGX_IOC_ENCLAVE_REMOVE_PAGES:
 		handler = sgx_ioc_enclave_remove_pages;
+		break;
+	case SGX_IOC_ENCLAVE_MODIFY_PAGES:
+		handler = sgx_ioc_enclave_modify_pages;
 		break;
 	default:
 		return -ENOIOCTLCMD;
