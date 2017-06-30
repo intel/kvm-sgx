@@ -69,6 +69,8 @@
 	_IOW(SGX_MAGIC, 0x01, struct sgx_enclave_add_page)
 #define SGX_IOC_ENCLAVE_INIT \
 	_IOW(SGX_MAGIC, 0x02, struct sgx_enclave_init)
+#define SGX_IOC_ENCLAVE_REMOVE_PAGES \
+	_IOW(SGX_MAGIC, 0x03, struct sgx_enclave_remove_pages)
 
 /* SGX leaf instruction return values */
 #define SGX_SUCCESS			0
@@ -133,5 +135,16 @@ struct sgx_enclave_init {
 	__u64	addr;
 	__u64	sigstruct;
 };
+
+/**
+ * struct sgx_enclave_remove_pages - parameter structure for the
+ *                                   %SGX_IOC_ENCLAVE_REMOVE_PAGES ioctl
+ * @addr:	address in the ELRANGE for the first page
+ * @length:	length of the address range (must be multiple of the page size)
+ */
+struct sgx_enclave_remove_pages {
+	__u64	addr;
+	__u64	length;
+} __packed;
 
 #endif /* _UAPI_ASM_X86_SGX_H */
