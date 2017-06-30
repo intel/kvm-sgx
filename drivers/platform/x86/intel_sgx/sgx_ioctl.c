@@ -197,6 +197,75 @@ out:
 	return ret;
 }
 
+/**
+ * sgx_ioc_enclave_remove_pages - handler for %SGX_IOC_ENCLAVE_REMOVE_PAGES
+ *
+ * @filep:	open file to /dev/sgx
+ * @cmd:	the command value
+ * @arg:	pointer to the struct sgx_enclave_remove_pages
+ *
+ * Remove pages from an address range.
+ *
+ * Return:
+ *   0 on success,
+ *   SGX error code on EREMOVE failure,
+ *   -errno otherwise
+ */
+static long sgx_ioc_enclave_remove_pages(struct file *filep, unsigned int cmd,
+					 unsigned long arg)
+{
+	struct sgx_enclave_remove_pages *params = (void *)arg;
+	unsigned long length = params->length;
+	unsigned long addr = params->addr;
+	struct sgx_encl_page *page;
+	struct vm_area_struct *vma;
+	struct sgx_encl *encl;
+	int ret;
+
+	ret = sgx_encl_get(params->addr, &encl);
+	if (ret)
+		return ret;
+
+	/* Address and length must align to page boundaries. */
+	if ((addr & (PAGE_SIZE - 1)) || (length & (PAGE_SIZE - 1)) ||
+	    addr < encl->base || length > encl->size) {
+		kref_put(&encl->refcount, sgx_encl_release);
+		return -EINVAL;
+	}
+
+	down_read(&encl->mm->mmap_sem);
+	mutex_lock(&encl->lock);
+
+	for ( ; addr < (addr + length); addr += PAGE_SIZE) {
+		ret = sgx_encl_find(encl->mm, addr, &vma);
+		if (!vma) {
+			ret = -EFAULT;
+			break;
+		}
+
+		page = sgx_fault_page(vma, addr, true);
+		if (IS_ERR(page)) {
+			ret = PTR_ERR(page);
+			break;
+		}
+
+		zap_vma_ptes(vma, addr, PAGE_SIZE);
+		ret = __sgx_free_page(page->epc_page);
+		if (ret) {
+			page->desc &= ~SGX_ENCL_PAGE_RESERVED;
+			break;
+		}
+		encl->secs_child_cnt--;
+		radix_tree_delete(&encl->page_tree, PFN_DOWN(addr));
+		kfree(page);
+	}
+
+	mutex_unlock(&encl->lock);
+	up_read(&encl->mm->mmap_sem);
+	kref_put(&encl->refcount, sgx_encl_release);
+	return ret;
+}
+
 typedef long (*sgx_ioc_t)(struct file *filep, unsigned int cmd,
 			  unsigned long arg);
 
@@ -215,6 +284,9 @@ long sgx_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 		break;
 	case SGX_IOC_ENCLAVE_INIT:
 		handler = sgx_ioc_enclave_init;
+		break;
+	case SGX_IOC_ENCLAVE_REMOVE_PAGES:
+		handler = sgx_ioc_enclave_remove_pages;
 		break;
 	default:
 		return -ENOIOCTLCMD;
