@@ -654,6 +654,9 @@ struct vcpu_vmx {
 	int ple_window;
 	bool ple_window_dirty;
 
+	/* Exit from SGX enclave */
+	bool sgx_enclave_exit;
+
 	/* Support for PML */
 #define PML_ENTITY_NUM		512
 	struct page *pml_pg;
@@ -2491,6 +2494,15 @@ static void vmx_set_interrupt_shadow(struct kvm_vcpu *vcpu, int mask)
 static void skip_emulated_instruction(struct kvm_vcpu *vcpu)
 {
 	unsigned long rip;
+
+	/*
+	 * Emulating an enclave instruction is not supported as we cannot
+	 * access the enclave's memory or its true RIP.  Most instructions
+	 * that might trigger VM exit are designed to #UD in an enclave,
+	 * and in all other cases, e.g. RDRAND and PAUSE, we never set the
+	 * associated exiting control.
+	 */
+	BUG_ON(to_vmx(vcpu)->sgx_enclave_exit);
 
 	rip = kvm_rip_read(vcpu);
 	rip += vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
@@ -9661,6 +9673,15 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	vmx->idt_vectoring_info = 0;
 
 	vmx->exit_reason = vmx->fail ? 0xdead : vmcs_read32(VM_EXIT_REASON);
+
+	/*
+	 * Immediately cache and clear the "exit from SGX enclave" bit
+	 * so that we can directly compare exit_reason against the base
+	 * exit reasons, e.g. exit_reason == EXIT_REASON_EXCEPTION_NMI.
+	 */
+	vmx->sgx_enclave_exit =
+		(vmx->exit_reason & VMX_EXIT_REASON_FROM_ENCLAVE);
+	vmx->exit_reason &= ~VMX_EXIT_REASON_FROM_ENCLAVE;
 	if (vmx->fail || (vmx->exit_reason & VMX_EXIT_REASONS_FAILED_VMENTRY))
 		return;
 
@@ -11470,6 +11491,8 @@ static void prepare_vmcs12(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12,
 	/* update exit information fields: */
 
 	vmcs12->vm_exit_reason = exit_reason;
+	if (to_vmx(vcpu)->sgx_enclave_exit)
+		vmcs12->vm_exit_reason |= VMX_EXIT_REASON_FROM_ENCLAVE;
 	vmcs12->exit_qualification = exit_qualification;
 	vmcs12->vm_exit_intr_info = exit_intr_info;
 
