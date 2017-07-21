@@ -247,6 +247,9 @@ struct vcpu_vmx {
 
 	bool req_immediate_exit;
 
+	/* Exit from SGX enclave */
+	bool sgx_enclave_exit;
+
 	/* Support for PML */
 #define PML_ENTITY_NUM		512
 	struct page *pml_pg;
