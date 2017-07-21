@@ -981,6 +981,9 @@ struct vcpu_vmx {
 	int ple_window;
 	bool ple_window_dirty;
 
+	/* Exit from SGX enclave */
+	bool sgx_enclave_exit;
+
 	/* Support for PML */
 #define PML_ENTITY_NUM		512
 	struct page *pml_pg;
@@ -3082,15 +3085,37 @@ static void vmx_set_interrupt_shadow(struct kvm_vcpu *vcpu, int mask)
 static bool vmx_emulate_resume_guest(struct kvm_vcpu *vcpu, void *insn,
 				     int insn_len)
 {
+	if (unlikely(to_vmx(vcpu)->sgx_enclave_exit)) {
+		kvm_queue_exception(vcpu, UD_VECTOR);
+		return true;
+	}
 	return false;
 }
 
 static void skip_emulated_instruction(struct kvm_vcpu *vcpu)
 {
+	u32 instr_len = vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
 	unsigned long rip;
 
+	/*
+	 * Emulating an enclave instruction is not supported as we cannot
+	 * access the enclave's memory or its true RIP, e.g. the GUEST_RIP
+	 * field points at the exit point of the enclave, not the RIP that
+	 * actually triggered the VMExit.  But, because most instructions
+	 * that cause VMExit will #UD in an enclave, this conundrum is
+	 * handled for us.  There are a few exceptions, notably the debug
+	 * debug instructions INT1ICEBRK and INT3, as they are allowed in
+	 * debug enclaves and generate #DB/#BP as expected, which we might
+	 * intercept.  But again, the CPU does the dirty work and saves an
+	 * instr length of zero so that VMMs don't shoot themselves in the
+	 * foot.  So, WARN if we try to skip a non-zero length instruction
+	 * after a VMExit from an enclave.
+	 */
+	WARN(instr_len && to_vmx(vcpu)->sgx_enclave_exit,
+		"KVM: skipping instruction after VMExit from SGX enclave");
+
 	rip = kvm_rip_read(vcpu);
-	rip += vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
+	rip += instr_len;
 	kvm_rip_write(vcpu, rip);
 
 	/* skipping an emulated instruction also counts */
@@ -7510,6 +7535,9 @@ static int handle_ept_misconfig(struct kvm_vcpu *vcpu)
 {
 	gpa_t gpa;
 
+	if (vmx_emulate_resume_guest(vcpu, NULL, 0))
+		return 1;
+
 	/*
 	 * A nested guest cannot optimize MMIO vmexits, because we have an
 	 * nGPA here instead of the required GPA.
@@ -10485,6 +10513,15 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	vmx->idt_vectoring_info = 0;
 
 	vmx->exit_reason = vmx->fail ? 0xdead : vmcs_read32(VM_EXIT_REASON);
+
+	/*
+	 * Immediately cache and clear the "exit from SGX enclave" bit
+	 * so that we can directly compare exit_reason against the base
+	 * exit reasons, e.g. exit_reason == EXIT_REASON_EXCEPTION_NMI.
+	 */
+	vmx->sgx_enclave_exit =
+		(vmx->exit_reason & VMX_EXIT_REASON_FROM_ENCLAVE);
+	vmx->exit_reason &= ~VMX_EXIT_REASON_FROM_ENCLAVE;
 	if (vmx->fail || (vmx->exit_reason & VMX_EXIT_REASONS_FAILED_VMENTRY))
 		return;
 
@@ -12474,6 +12511,8 @@ static void prepare_vmcs12(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12,
 	/* update exit information fields: */
 
 	vmcs12->vm_exit_reason = exit_reason;
+	if (to_vmx(vcpu)->sgx_enclave_exit)
+		vmcs12->vm_exit_reason |= VMX_EXIT_REASON_FROM_ENCLAVE;
 	vmcs12->exit_qualification = exit_qualification;
 	vmcs12->vm_exit_intr_info = exit_intr_info;
 
