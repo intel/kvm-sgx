@@ -69,7 +69,7 @@
 #include <linux/hashtable.h>
 #include <linux/shmem_fs.h>
 
-static int sgx_get_encl(unsigned long addr, struct sgx_encl **encl)
+static int sgx_encl_get(unsigned long addr, struct sgx_encl **encl)
 {
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma;
@@ -156,7 +156,7 @@ static long sgx_ioc_enclave_add_page(struct file *filep, unsigned int cmd,
 	void *data;
 	int ret;
 
-	ret = sgx_get_encl(addp->addr, &encl);
+	ret = sgx_encl_get(addp->addr, &encl);
 	if (ret)
 		return ret;
 
@@ -227,11 +227,16 @@ static long sgx_ioc_enclave_init(struct file *filep, unsigned int cmd,
 	if (ret)
 		goto out;
 
-	ret = sgx_get_encl(encl_id, &encl);
+	ret = sgx_encl_get(encl_id, &encl);
 	if (ret)
 		goto out;
 
-	ret = sgx_encl_init(encl, sigstruct, einittoken);
+	if (!(initp->flags && SGX_ENCLAVE_INIT_ARCH))
+		ret = sgx_le_get_token(&sgx_le_ctx, encl, sigstruct,
+				       einittoken);
+
+	if (!ret)
+		ret = sgx_encl_init(encl, sigstruct, einittoken);
 
 	kref_put(&encl->refcount, sgx_encl_release);
 
