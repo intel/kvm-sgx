@@ -68,6 +68,7 @@
 #include <linux/workqueue.h>
 #include <linux/mmu_notifier.h>
 #include <linux/radix-tree.h>
+#include <crypto/hash.h>
 #include <asm/sgx.h>
 
 #define SGX_EINIT_SPIN_COUNT	20
@@ -177,6 +178,7 @@ extern u64 sgx_xfrm_mask;
 extern u32 sgx_misc_reserved;
 extern u32 sgx_xsave_size_tbl[64];
 
+extern const struct file_operations sgx_fops;
 extern const struct vm_operations_struct sgx_vm_ops;
 
 #define sgx_pr_ratelimited(level, encl, fmt, ...)			  \
@@ -235,6 +237,9 @@ struct sgx_encl_page *sgx_fault_page(struct vm_area_struct *vma,
 				     unsigned int flags);
 
 
+int sgx_get_key_hash(struct crypto_shash *tfm, const void *modulus, void *hash);
+int sgx_get_key_hash_simple(const void *modulus, void *hash);
+
 extern struct mutex sgx_tgid_ctx_mutex;
 extern struct list_head sgx_tgid_ctx_list;
 extern atomic_t sgx_va_pages_cnt;
@@ -248,5 +253,17 @@ void *sgx_get_page(struct sgx_epc_page *entry);
 void sgx_put_page(void *epc_page_vaddr);
 void sgx_eblock(struct sgx_encl *encl, struct sgx_epc_page *epc_page);
 void sgx_etrack(struct sgx_encl *encl);
+
+extern struct sgx_le_ctx sgx_le_ctx;
+
+int sgx_le_init(struct sgx_le_ctx *ctx);
+void sgx_le_exit(struct sgx_le_ctx *ctx);
+void sgx_le_stop(struct sgx_le_ctx *ctx);
+int sgx_le_start(struct sgx_le_ctx *ctx);
+
+int sgx_le_get_token(struct sgx_le_ctx *ctx,
+		     const struct sgx_encl *encl,
+		     const struct sgx_sigstruct *sigstruct,
+		     struct sgx_einittoken *token);
 
 #endif /* __ARCH_X86_INTEL_SGX_H__ */

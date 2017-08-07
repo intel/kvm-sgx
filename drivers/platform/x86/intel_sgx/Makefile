@@ -11,6 +11,7 @@ intel_sgx-$(CONFIG_INTEL_SGX) += \
 	sgx_page_cache.o \
 	sgx_util.o \
 	sgx_vma.o \
+	sgx_le.o \
 	sgx_le_proxy_piggy.o
 
 $(eval $(call config_filename,INTEL_SGX_SIGNING_KEY))
