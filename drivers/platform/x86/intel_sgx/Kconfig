@@ -9,6 +9,8 @@ config INTEL_SGX
 	default n
 	depends on X86_64 && CPU_SUP_INTEL
 	select MMU_NOTIFIER
+	select CRYPTO
+	select CRYPTO_SHA256
 	---help---
 	Intel(R) SGX is a set of CPU instructions that can be used by
 	applications to set aside private regions of code and data.  The code

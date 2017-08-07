@@ -90,6 +90,35 @@ u64 sgx_xfrm_mask = 0x3;
 u32 sgx_misc_reserved;
 u32 sgx_xsave_size_tbl[64];
 
+static DECLARE_RWSEM(sgx_file_sem);
+
+static int sgx_open(struct inode *inode, struct file *file)
+{
+	int ret;
+
+	down_read(&sgx_file_sem);
+
+	ret = sgx_le_start(&sgx_le_ctx);
+	if (ret) {
+		up_read(&sgx_file_sem);
+		return ret;
+	}
+
+	return 0;
+}
+
+static int sgx_release(struct inode *inode, struct file *file)
+{
+	up_read(&sgx_file_sem);
+
+	if (down_write_trylock(&sgx_file_sem)) {
+		sgx_le_stop(&sgx_le_ctx);
+		up_write(&sgx_file_sem);
+	}
+
+	return 0;
+}
+
 #ifdef CONFIG_COMPAT
 long sgx_compat_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 {
@@ -142,8 +171,10 @@ static unsigned long sgx_get_unmapped_area(struct file *file,
 	return addr;
 }
 
-static const struct file_operations sgx_fops = {
+const struct file_operations sgx_fops = {
 	.owner			= THIS_MODULE,
+	.open			= sgx_open,
+	.release		= sgx_release,
 	.unlocked_ioctl		= sgx_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl		= sgx_compat_ioctl,
@@ -313,11 +344,17 @@ static int sgx_dev_init(struct device *parent)
 		goto out_iounmap;
 	}
 
-	ret = cdev_device_add(&sgx_dev->cdev, &sgx_dev->dev);
+	ret = sgx_le_init(&sgx_le_ctx);
 	if (ret)
 		goto out_workqueue;
 
+	ret = cdev_device_add(&sgx_dev->cdev, &sgx_dev->dev);
+	if (ret)
+		goto out_le;
+
 	return 0;
+out_le:
+	sgx_le_exit(&sgx_le_ctx);
 out_workqueue:
 	destroy_workqueue(sgx_add_page_wq);
 out_iounmap:
@@ -380,6 +417,8 @@ static int sgx_drv_remove(struct platform_device *pdev)
 	int i;
 
 	cdev_device_del(&ctx->cdev, &ctx->dev);
+
+	sgx_le_exit(&sgx_le_ctx);
 
 	destroy_workqueue(sgx_add_page_wq);
 #ifdef CONFIG_X86_64
