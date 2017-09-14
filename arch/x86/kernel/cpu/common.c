@@ -52,6 +52,7 @@
 #include <asm/microcode_intel.h>
 #include <asm/intel-family.h>
 #include <asm/cpu_device_id.h>
+#include <asm/sgx_arch.h>
 
 #ifdef CONFIG_X86_LOCAL_APIC
 #include <asm/uv/uv.h>
@@ -866,10 +867,9 @@ void get_cpu_cap(struct cpuinfo_x86 *c)
 		}
 	}
 
-	/* Intel SGX features: level 0x00000012 */
-	if (c->cpuid_level >= 0x00000012) {
-		cpuid(0x00000012, &eax, &ebx, &ecx, &edx);
-
+	/* Intel SGX features */
+	if (c->cpuid_level >= SGX_CPUID) {
+		cpuid(SGX_CPUID,  &eax, &ebx, &ecx, &edx);
 		c->x86_capability[CPUID_12_EAX] = eax;
 	}
 
