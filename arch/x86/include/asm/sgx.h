@@ -91,12 +91,6 @@ enum sgx_commands {
 	EMODT	= 0xF,
 };
 
-#ifdef CONFIG_X86_64
-#define XAX "%%rax"
-#else
-#define XAX "%%eax"
-#endif
-
 #define __encls_ret(rax, rbx, rcx, rdx)			\
 	({						\
 	int ret;					\
@@ -104,10 +98,10 @@ enum sgx_commands {
 	"1: .byte 0x0f, 0x01, 0xcf;\n\t"		\
 	"2:\n"						\
 	".section .fixup,\"ax\"\n"			\
-	"3: mov $-14,"XAX"\n"				\
+	"3: shll $16,%%eax\n"				\
 	"   jmp 2b\n"					\
 	".previous\n"					\
-	_ASM_EXTABLE(1b, 3b)				\
+	_ASM_EXTABLE_FAULT(1b, 3b)			\
 	: "=a"(ret)					\
 	: "a"(rax), "b"(rbx), "c"(rcx), "d"(rdx)	\
 	: "memory");					\
@@ -119,20 +113,20 @@ enum sgx_commands {
 	int ret;					\
 	asm volatile(					\
 	"1: .byte 0x0f, 0x01, 0xcf;\n\t"		\
-	"   xor "XAX","XAX"\n"				\
+	"   xor %%eax,%%eax;\n"				\
 	"2:\n"						\
 	".section .fixup,\"ax\"\n"			\
-	"3: mov $-14,"XAX"\n"				\
+	"3: shll $16,%%eax\n"				\
 	"   jmp 2b\n"					\
 	".previous\n"					\
-	_ASM_EXTABLE(1b, 3b)				\
+	_ASM_EXTABLE_FAULT(1b, 3b)			\
 	: "=a"(ret), "=b"(rbx), "=c"(rcx)		\
 	: "a"(rax), "b"(rbx), "c"(rcx), rdx		\
 	: "memory");					\
 	ret;						\
 	})
 
-static inline unsigned long __ecreate(struct sgx_pageinfo *pginfo, void *secs)
+static inline int __ecreate(struct sgx_pageinfo *pginfo, void *secs)
 {
 	return __encls(ECREATE, pginfo, secs, "d"(0));
 }
