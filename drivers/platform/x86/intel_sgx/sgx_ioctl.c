@@ -277,6 +277,7 @@ long sgx_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 		if (copy_to_user((void __user *)arg, data, _IOC_SIZE(cmd)))
 			return -EFAULT;
 	}
-
+	if (IS_ENCLS_FAULT(ret))
+		return -EFAULT;
 	return ret;
 }
