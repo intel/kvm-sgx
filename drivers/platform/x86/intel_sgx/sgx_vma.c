@@ -140,7 +140,7 @@ static inline int sgx_vma_access_word(struct sgx_encl *encl,
 			sgx_put_page(vaddr);
 			if (ret) {
 				sgx_dbg(encl, "EDBGRD returned %d\n", ret);
-				return -EFAULT;
+				return ENCLS_TO_ERR(ret);
 			}
 		}
 
@@ -151,7 +151,7 @@ static inline int sgx_vma_access_word(struct sgx_encl *encl,
 		sgx_put_page(vaddr);
 		if (ret) {
 			sgx_dbg(encl, "EDBGWR returned %d\n", ret);
-			return -EFAULT;
+			return ENCLS_TO_ERR(ret);
 		}
 	} else {
 		if (encl_page->flags & SGX_ENCL_PAGE_TCS &&
@@ -164,7 +164,7 @@ static inline int sgx_vma_access_word(struct sgx_encl *encl,
 		sgx_put_page(vaddr);
 		if (ret) {
 			sgx_dbg(encl, "EDBGRD returned %d\n", ret);
-			return -EFAULT;
+			return ENCLS_TO_ERR(ret);
 		}
 
 		memcpy(buf + i, data + align, cnt);
