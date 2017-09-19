@@ -91,6 +91,8 @@ enum sgx_commands {
 	EMODT	= 0xF,
 };
 
+#define IS_ENCLS_FAULT(r) ((r) & 0xffff0000)
+
 #define __encls_ret(rax, rbx, rcx, rdx)			\
 	({						\
 	int ret;					\

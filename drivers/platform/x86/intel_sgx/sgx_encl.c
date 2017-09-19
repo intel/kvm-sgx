@@ -411,7 +411,7 @@ static int sgx_init_page(struct sgx_encl *encl, struct sgx_encl_page *entry,
 			sgx_warn(encl, "EPA returned %d\n", ret);
 			sgx_drv_free_page(epc_page, encl);
 			kfree(va_page);
-			return -EFAULT;
+			return ret;
 		}
 
 		va_page->epc_page = epc_page;
@@ -545,7 +545,6 @@ int sgx_encl_create(struct sgx_secs *secs)
 
 	if (ret) {
 		sgx_dbg(encl, "ECREATE returned %ld\n", ret);
-		ret = -EFAULT;
 		goto out;
 	}
 
