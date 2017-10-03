@@ -83,6 +83,8 @@ static unsigned int sgx_nr_high_pages;
 static struct task_struct *ksgxswapd_tsk;
 static DECLARE_WAIT_QUEUE_HEAD(ksgxswapd_waitq);
 
+#define ENCL_PAGE(entry) ((struct sgx_encl_page *)((entry)->owner))
+
 static int sgx_test_and_clear_young_cb(pte_t *ptep, pgtable_t token,
 				       unsigned long addr, void *data)
 {
@@ -143,7 +145,7 @@ void sgx_activate_page(struct sgx_epc_page *epc_page,
 		       struct sgx_encl *encl,
 		       struct sgx_encl_page *encl_page)
 {
-	epc_page->encl_page = encl_page;
+	epc_page->owner = encl_page;
 
 	encl_page->encl = encl;
 	encl_page->epc_page = epc_page;
@@ -169,8 +171,8 @@ static void sgx_isolate_pages(struct list_head *dst,
 					 struct sgx_epc_page,
 					 list);
 
-		if ((entry->encl_page->encl->flags & SGX_ENCL_DEAD) ||
-		    !kref_get_unless_zero(&entry->encl_page->encl->refcount))
+		if ((ENCL_PAGE(entry)->encl->flags & SGX_ENCL_DEAD) ||
+		    !kref_get_unless_zero(&ENCL_PAGE(entry)->encl->refcount))
 			list_del_init(&entry->list);
 		else
 			list_move_tail(&entry->list, dst);
@@ -271,9 +273,9 @@ static void sgx_write_pages(struct sgx_encl *encl, struct list_head *src)
 
 	/* EBLOCK */
 	list_for_each_entry_safe(entry, tmp, src, list) {
-		ret = sgx_encl_find(encl->mm, entry->encl_page->addr, &vma);
+		ret = sgx_encl_find(encl->mm, ENCL_PAGE(entry)->addr, &vma);
 		if (!ret && encl == vma->vm_private_data)
-			zap_vma_ptes(vma, entry->encl_page->addr, PAGE_SIZE);
+			zap_vma_ptes(vma, ENCL_PAGE(entry)->addr, PAGE_SIZE);
 
 		sgx_eblock(encl, entry);
 	}
@@ -285,7 +287,7 @@ static void sgx_write_pages(struct sgx_encl *encl, struct list_head *src)
 	while (!list_empty(src)) {
 		entry = list_first_entry(src, struct sgx_epc_page, list);
 		list_del_init(&entry->list);
-		sgx_evict_page(entry->encl_page, encl);
+		sgx_evict_page(ENCL_PAGE(entry), encl);
 		encl->secs_child_cnt--;
 	}
 
@@ -304,7 +306,7 @@ static inline void sgx_age_pages(struct list_head *swap,
 		return;
 
 	list_for_each_entry_safe(entry, tmp, swap, list) {
-		if (sgx_test_and_clear_young(entry->encl_page))
+		if (sgx_test_and_clear_young(ENCL_PAGE(entry)))
 			list_move_tail(&entry->list, skip);
 	}
 }
@@ -318,10 +320,10 @@ static inline void sgx_reserve_pages(struct list_head *swap,
 		return;
 
 	list_for_each_entry_safe(entry, tmp, swap, list) {
-		if (entry->encl_page->flags & SGX_ENCL_PAGE_RESERVED)
+		if (ENCL_PAGE(entry)->flags & SGX_ENCL_PAGE_RESERVED)
 			list_move_tail(&entry->list, skip);
 		else
-			entry->encl_page->flags |= SGX_ENCL_PAGE_RESERVED;
+			ENCL_PAGE(entry)->flags |= SGX_ENCL_PAGE_RESERVED;
 	}
 }
 
@@ -348,11 +350,11 @@ static void sgx_swap_pages(unsigned long nr_to_scan)
 
 	while (!list_empty(&iso)) {
 		entry = list_first_entry(&iso, struct sgx_epc_page, list);
-		encl = entry->encl_page->encl;
+		encl = ENCL_PAGE(entry)->encl;
 		kref_get(&encl->refcount);
 
 		list_for_each_entry_safe(entry, tmp, &iso, list) {
-			if (entry->encl_page->encl != encl)
+			if (ENCL_PAGE(entry)->encl != encl)
 				continue;
 
 			kref_put(&encl->refcount, sgx_encl_release);
@@ -556,7 +558,7 @@ void sgx_free_page(struct sgx_epc_page *entry, struct sgx_encl *encl)
 	if (ret)
 		sgx_crit(encl, "EREMOVE returned %d\n", ret);
 
-	entry->encl_page = NULL;
+	entry->owner = NULL;
 
 	spin_lock(&sgx_free_list_lock);
 	list_add(&entry->list, &sgx_free_list);

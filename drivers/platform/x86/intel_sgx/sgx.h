@@ -80,7 +80,7 @@
 struct sgx_epc_page {
 	resource_size_t	pa;
 	struct list_head list;
-	struct sgx_encl_page *encl_page;
+	void *owner;
 };
 
 enum sgx_alloc_flags {
