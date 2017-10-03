@@ -258,7 +258,11 @@ extern struct sgx_epc_page *sgx_alloc_page(unsigned int flags, void *owner,
 extern int sgx_batch_alloc_pages(int nr_pages, struct list_head *dst,
 				 void *owner, struct sgx_epc_operations *ops);
 extern void sgx_free_page(struct sgx_epc_page *entry);
-extern void *sgx_get_page(struct sgx_epc_page *entry);
+extern void *__sgx_get_page(resource_size_t pa);
+static inline void *sgx_get_page(struct sgx_epc_page *entry)
+{
+       return __sgx_get_page(entry->pa);
+}
 extern void sgx_put_page(void *epc_page_vaddr);
 extern void sgx_page_reclaimable(struct sgx_epc_page *epc_page);
 extern void sgx_reclaimable_putback(struct list_head *src);
