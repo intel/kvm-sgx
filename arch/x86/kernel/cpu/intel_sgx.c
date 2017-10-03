@@ -306,17 +306,17 @@ void sgx_free_page(struct sgx_epc_page *entry)
 }
 EXPORT_SYMBOL(sgx_free_page);
 
-void *sgx_get_page(struct sgx_epc_page *entry)
+void *__sgx_get_page(resource_size_t pa)
 {
 #ifdef CONFIG_X86_32
-	return kmap_atomic_pfn(PFN_DOWN(entry->pa));
+	return kmap_atomic_pfn(PFN_DOWN(pa));
 #else
-	int i = ((entry->pa) & ~PAGE_MASK);
+	int i = (pa & ~PAGE_MASK);
 	return (void *)(sgx_epc_banks[i].va +
-		((entry->pa & PAGE_MASK) - sgx_epc_banks[i].pa));
+		((pa & PAGE_MASK) - sgx_epc_banks[i].pa));
 #endif
 }
-EXPORT_SYMBOL(sgx_get_page);
+EXPORT_SYMBOL(__sgx_get_page);
 
 void sgx_put_page(void *epc_page_vaddr)
 {
