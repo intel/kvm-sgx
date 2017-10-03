@@ -252,7 +252,7 @@ static void sgx_add_page_worker(struct work_struct *work)
 		mutex_lock(&encl->lock);
 
 		if (!sgx_process_add_page_req(req, epc_page)) {
-			sgx_free_page(epc_page, encl);
+			sgx_drv_free_page(epc_page, encl);
 			skip_rest = true;
 		}
 
@@ -394,7 +394,7 @@ static int sgx_init_page(struct sgx_encl *encl, struct sgx_encl_page *entry,
 		if (!vaddr) {
 			sgx_warn(encl, "kmap of a new VA page failed %d\n",
 				 ret);
-			sgx_free_page(epc_page, encl);
+			sgx_drv_free_page(epc_page, encl);
 			kfree(va_page);
 			return -EFAULT;
 		}
@@ -404,7 +404,7 @@ static int sgx_init_page(struct sgx_encl *encl, struct sgx_encl_page *entry,
 
 		if (ret) {
 			sgx_warn(encl, "EPA returned %d\n", ret);
-			sgx_free_page(epc_page, encl);
+			sgx_drv_free_page(epc_page, encl);
 			kfree(va_page);
 			return -EFAULT;
 		}
@@ -905,7 +905,7 @@ void sgx_encl_release(struct kref *ref)
 	radix_tree_for_each_slot(slot, &encl->page_tree, &iter, 0) {
 		entry = *slot;
 		if (entry->epc_page)
-			sgx_free_page(entry->epc_page, encl);
+			sgx_drv_free_page(entry->epc_page, encl);
 		radix_tree_delete(&encl->page_tree, entry->addr >> PAGE_SHIFT);
 		kfree(entry);
 	}
@@ -914,12 +914,12 @@ void sgx_encl_release(struct kref *ref)
 		va_page = list_first_entry(&encl->va_pages,
 					   struct sgx_va_page, list);
 		list_del(&va_page->list);
-		sgx_free_page(va_page->epc_page, encl);
+		sgx_drv_free_page(va_page->epc_page, encl);
 		kfree(va_page);
 	}
 
 	if (encl->secs.epc_page)
-		sgx_free_page(encl->secs.epc_page, encl);
+		sgx_drv_free_page(encl->secs.epc_page, encl);
 
 	if (encl->tgid)
 		put_pid(encl->tgid);

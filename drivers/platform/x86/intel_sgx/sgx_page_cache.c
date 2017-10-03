@@ -257,7 +257,7 @@ static void sgx_evict_page(struct sgx_encl_page *entry,
 			   struct sgx_encl *encl)
 {
 	sgx_ewb(encl, entry);
-	sgx_free_page(entry->epc_page, encl);
+	sgx_drv_free_page(entry->epc_page, encl);
 	entry->epc_page = NULL;
 	entry->flags &= ~SGX_ENCL_PAGE_RESERVED;
 }
@@ -535,7 +535,7 @@ struct sgx_epc_page *sgx_alloc_page(unsigned int flags)
 }
 
 /**
- * sgx_free_page - free an EPC page
+ * sgx_drv_free_page - free an EPC page
  *
  * EREMOVE an EPC page and insert it back to the list of free pages.
  * If EREMOVE fails, the error is printed out loud as a critical error.
@@ -544,7 +544,7 @@ struct sgx_epc_page *sgx_alloc_page(unsigned int flags)
  * @entry:	any EPC page
  * @encl:	enclave that owns the given EPC page
  */
-void sgx_free_page(struct sgx_epc_page *entry, struct sgx_encl *encl)
+void sgx_drv_free_page(struct sgx_epc_page *entry, struct sgx_encl *encl)
 {
 	void *epc;
 	int ret;
