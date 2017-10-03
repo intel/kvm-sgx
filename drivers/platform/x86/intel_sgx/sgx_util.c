@@ -306,9 +306,9 @@ static struct sgx_encl_page *sgx_do_fault(struct vm_area_struct *vma,
 out:
 	mutex_unlock(&encl->lock);
 	if (epc_page)
-		sgx_free_page(epc_page, encl);
+		sgx_drv_free_page(epc_page, encl);
 	if (secs_epc_page)
-		sgx_free_page(secs_epc_page, encl);
+		sgx_drv_free_page(secs_epc_page, encl);
 	return rc ? ERR_PTR(rc) : entry;
 }
 

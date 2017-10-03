@@ -241,7 +241,7 @@ void sgx_activate_page(struct sgx_epc_page *epc_page,
 		       struct sgx_encl *encl,
 		       struct sgx_encl_page *encl_page);
 struct sgx_epc_page *sgx_alloc_page(unsigned int flags);
-void sgx_free_page(struct sgx_epc_page *entry, struct sgx_encl *encl);
+void sgx_drv_free_page(struct sgx_epc_page *entry, struct sgx_encl *encl);
 void *sgx_get_page(struct sgx_epc_page *entry);
 void sgx_put_page(void *epc_page_vaddr);
 void sgx_eblock(struct sgx_encl *encl, struct sgx_epc_page *epc_page);
