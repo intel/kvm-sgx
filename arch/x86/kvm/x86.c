@@ -8827,7 +8827,7 @@ void kvm_arch_sync_events(struct kvm *kvm)
 	kvm_free_pit(kvm);
 }
 
-int __x86_set_memory_region(struct kvm *kvm, int id, gpa_t gpa, u32 size)
+int __x86_set_memory_region(struct kvm *kvm, int id, gpa_t gpa, gpa_t size)
 {
 	int i, r;
 	unsigned long hva;
@@ -8879,7 +8879,7 @@ int __x86_set_memory_region(struct kvm *kvm, int id, gpa_t gpa, u32 size)
 }
 EXPORT_SYMBOL_GPL(__x86_set_memory_region);
 
-int x86_set_memory_region(struct kvm *kvm, int id, gpa_t gpa, u32 size)
+int x86_set_memory_region(struct kvm *kvm, int id, gpa_t gpa, gpa_t size)
 {
 	int r;
 
