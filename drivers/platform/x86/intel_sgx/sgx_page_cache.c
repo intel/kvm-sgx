@@ -253,7 +253,7 @@ static void sgx_evict_page(struct sgx_encl_page *entry,
 			   struct sgx_encl *encl)
 {
 	sgx_ewb(encl, entry);
-	sgx_drv_free_page(entry->epc_page, encl);
+	sgx_free_page(entry->epc_page);
 	entry->epc_page = NULL;
 	entry->flags &= ~SGX_ENCL_PAGE_RESERVED;
 }
