@@ -233,7 +233,6 @@ int sgx_get_key_hash_simple(const void *modulus, void *hash);
 
 extern struct mutex sgx_encl_mutex;
 extern struct list_head sgx_encl_list;
-extern atomic_t sgx_va_pages_cnt;
 
 int sgx_add_epc_bank(resource_size_t start, unsigned long size, int bank);
 int sgx_page_cache_init(void);
