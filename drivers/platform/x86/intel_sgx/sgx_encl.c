@@ -409,8 +409,6 @@ static int sgx_init_page(struct sgx_encl *encl, struct sgx_encl_page *entry,
 			return -EFAULT;
 		}
 
-		atomic_inc(&sgx_va_pages_cnt);
-
 		va_page->epc_page = epc_page;
 		va_offset = sgx_alloc_va_slot(va_page);
 
@@ -918,7 +916,6 @@ void sgx_encl_release(struct kref *ref)
 		list_del(&va_page->list);
 		sgx_free_page(va_page->epc_page, encl);
 		kfree(va_page);
-		atomic_dec(&sgx_va_pages_cnt);
 	}
 
 	if (encl->secs.epc_page)

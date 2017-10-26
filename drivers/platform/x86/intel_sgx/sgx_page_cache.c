@@ -76,7 +76,6 @@ static DEFINE_SPINLOCK(sgx_global_lru_lock);
 
 LIST_HEAD(sgx_encl_list);
 DEFINE_MUTEX(sgx_encl_mutex);
-atomic_t sgx_va_pages_cnt = ATOMIC_INIT(0);
 static unsigned int sgx_nr_total_epc_pages;
 static unsigned int sgx_nr_free_pages;
 static unsigned int sgx_nr_low_pages = SGX_NR_LOW_EPC_PAGES_DEFAULT;
@@ -508,10 +507,10 @@ struct sgx_epc_page *sgx_alloc_page(unsigned int flags)
 		if (entry)
 			break;
 
-		/* We need at minimum two pages for the #PF handler. */
-		if (atomic_read(&sgx_va_pages_cnt) >
-		    (sgx_nr_total_epc_pages - 2))
-			return ERR_PTR(-ENOMEM);
+		if (list_empty(&sgx_global_lru)) {
+			entry = ERR_PTR(-ENOMEM);
+			break;
+		}
 
 		if (flags & SGX_ALLOC_ATOMIC) {
 			entry = ERR_PTR(-EBUSY);
