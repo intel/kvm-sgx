@@ -7,7 +7,7 @@ menu "Intel SGX"
 config INTEL_SGX
 	tristate "Intel(R) SGX Driver"
 	default n
-	depends on X86_64 && CPU_SUP_INTEL
+	depends on X86_64 && INTEL_SGX_CORE
 	select MMU_NOTIFIER
 	select CRYPTO
 	select CRYPTO_SHA256

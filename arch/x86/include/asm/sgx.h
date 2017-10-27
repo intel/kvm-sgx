@@ -62,6 +62,7 @@
 #include <asm/asm.h>
 #include <linux/bitops.h>
 #include <linux/err.h>
+#include <linux/spinlock.h>
 #include <linux/types.h>
 
 #define SGX_CPUID 0x12
@@ -229,5 +230,11 @@ static inline int __emodt(struct sgx_secinfo *secinfo, void *epc)
 
 	return __encls_ret(EMODT, secinfo, epc, rdx);
 }
+
+#ifdef CONFIG_INTEL_SGX_CORE
+
+extern bool sgx_enabled;
+
+#endif /* CONFIG_INTEL_SGX_CORE */
 
 #endif /* _ASM_X86_SGX_H */

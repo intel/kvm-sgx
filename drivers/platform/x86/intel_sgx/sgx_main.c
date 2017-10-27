@@ -379,42 +379,11 @@ out_iounmap:
 
 static int sgx_drv_probe(struct platform_device *pdev)
 {
-	unsigned int eax, ebx, ecx, edx;
-	unsigned long fc;
-
-	if (boot_cpu_data.x86_vendor != X86_VENDOR_INTEL)
+	if (!sgx_enabled)
 		return -ENODEV;
-
-	if (!boot_cpu_has(X86_FEATURE_SGX)) {
-		pr_err("intel_sgx: the CPU is missing SGX\n");
-		return -ENODEV;
-	}
 
 	if (!boot_cpu_has(X86_FEATURE_SGX_LC)) {
 		pr_err("intel_sgx: the CPU is missing launch control\n");
-		return -ENODEV;
-	}
-
-	rdmsrl(MSR_IA32_FEATURE_CONTROL, fc);
-	if (!(fc & FEATURE_CONTROL_LOCKED)) {
-		pr_err("intel_sgx: the feature control MSR is not locked\n");
-		return -ENODEV;
-	}
-
-	if (!(fc & FEATURE_CONTROL_SGX_ENABLE)) {
-		pr_err("intel_sgx: SGX is not enabled\n");
-		return -ENODEV;
-	}
-
-	cpuid(0, &eax, &ebx, &ecx, &edx);
-	if (eax < SGX_CPUID) {
-		pr_err("intel_sgx: CPUID is missing the SGX leaf\n");
-		return -ENODEV;
-	}
-
-	cpuid_count(SGX_CPUID, SGX_CPUID_CAPABILITIES, &eax, &ebx, &ecx, &edx);
-	if (!(eax & 1)) {
-		pr_err("intel_sgx: CPU does not support the SGX1 instructions\n");
 		return -ENODEV;
 	}
 
