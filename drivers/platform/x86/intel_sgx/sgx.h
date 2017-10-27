@@ -77,12 +77,6 @@
 
 #define SGX_VA_SLOT_COUNT 512
 
-struct sgx_epc_page {
-	resource_size_t	pa;
-	struct list_head list;
-	void *owner;
-};
-
 enum sgx_alloc_flags {
 	SGX_ALLOC_ATOMIC	= BIT(0),
 };
@@ -154,17 +148,7 @@ struct sgx_encl {
 	struct mmu_notifier mmu_notifier;
 };
 
-struct sgx_epc_bank {
-	unsigned long pa;
-#ifdef CONFIG_X86_64
-	unsigned long va;
-#endif
-	unsigned long size;
-};
-
 extern struct workqueue_struct *sgx_add_page_wq;
-extern struct sgx_epc_bank sgx_epc_banks[];
-extern int sgx_nr_epc_banks;
 extern u64 sgx_encl_size_max_32;
 extern u64 sgx_encl_size_max_64;
 extern u64 sgx_xfrm_mask;
@@ -234,7 +218,6 @@ int sgx_get_key_hash_simple(const void *modulus, void *hash);
 extern struct mutex sgx_encl_mutex;
 extern struct list_head sgx_encl_list;
 
-int sgx_add_epc_bank(resource_size_t start, unsigned long size, int bank);
 int sgx_page_cache_init(void);
 void sgx_page_cache_teardown(void);
 void sgx_activate_page(struct sgx_epc_page *epc_page,
@@ -242,8 +225,6 @@ void sgx_activate_page(struct sgx_epc_page *epc_page,
 		       struct sgx_encl_page *encl_page);
 struct sgx_epc_page *sgx_alloc_page(unsigned int flags);
 void sgx_drv_free_page(struct sgx_epc_page *entry, struct sgx_encl *encl);
-void *sgx_get_page(struct sgx_epc_page *entry);
-void sgx_put_page(void *epc_page_vaddr);
 void sgx_eblock(struct sgx_encl *encl, struct sgx_epc_page *epc_page);
 void sgx_etrack(struct sgx_encl *encl);
 
