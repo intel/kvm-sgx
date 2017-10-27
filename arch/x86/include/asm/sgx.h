@@ -234,7 +234,6 @@ static inline int __emodt(struct sgx_secinfo *secinfo, void *epc)
 #ifdef CONFIG_INTEL_SGX_CORE
 
 extern bool sgx_enabled;
-extern unsigned int sgx_nr_free_pages;
 
 struct sgx_epc_page;
 
@@ -250,11 +249,18 @@ struct sgx_epc_page {
 	struct sgx_epc_operations *ops;
 };
 
-extern struct sgx_epc_page *sgx_alloc_page_fast(void *owner,
-						struct sgx_epc_operations *ops);
+enum sgx_alloc_flags {
+	SGX_ALLOC_ATOMIC	= BIT(0),
+};
+
+extern struct sgx_epc_page *sgx_alloc_page(unsigned int flags, void *owner,
+					   struct sgx_epc_operations *ops);
 extern void sgx_free_page(struct sgx_epc_page *entry);
 extern void *sgx_get_page(struct sgx_epc_page *entry);
 extern void sgx_put_page(void *epc_page_vaddr);
+extern void sgx_page_reclaimable(struct sgx_epc_page *epc_page);
+extern void sgx_reclaimable_putback(struct list_head *src);
+extern void sgx_page_defunct(struct sgx_epc_page *epc_page);
 
 #endif /* CONFIG_INTEL_SGX_CORE */
 

@@ -66,18 +66,8 @@
 #include <linux/sched/signal.h>
 #include <linux/slab.h>
 
-#define SGX_NR_LOW_EPC_PAGES_DEFAULT 32
-#define SGX_NR_SWAP_CLUSTER_MAX	16
-
-static LIST_HEAD(sgx_global_lru);
-static DEFINE_SPINLOCK(sgx_global_lru_lock);
-
 LIST_HEAD(sgx_encl_list);
 DEFINE_MUTEX(sgx_encl_mutex);
-static unsigned int sgx_nr_low_pages = SGX_NR_LOW_EPC_PAGES_DEFAULT;
-static unsigned int sgx_nr_high_pages;
-static struct task_struct *ksgxswapd_tsk;
-static DECLARE_WAIT_QUEUE_HEAD(ksgxswapd_waitq);
 
 #define ENCL_PAGE(entry) ((struct sgx_encl_page *)((entry)->owner))
 
@@ -104,10 +94,13 @@ static int sgx_test_and_clear_young_cb(pte_t *ptep, pgtable_t token,
  * enclave page and clears it.  Returns 1 if the page has been
  * recently accessed and 0 if not.
  */
-static int sgx_test_and_clear_young(struct sgx_encl_page *page)
+static int sgx_test_and_clear_young(struct sgx_epc_page *epc_page)
 {
 	struct vm_area_struct *vma;
 	int ret;
+	struct sgx_encl_page *page = ENCL_PAGE(epc_page);
+	if (WARN_ON(!page || !page->encl))
+		return 0;
 
 	ret = sgx_encl_find(page->encl->mm, page->addr, &vma);
 	if (ret)
@@ -120,37 +113,6 @@ static int sgx_test_and_clear_young(struct sgx_encl_page *page)
 				   sgx_test_and_clear_young_cb, vma->vm_mm);
 }
 
-static void sgx_page_reclaimable(struct sgx_epc_page *epc_page)
-{
-	if (WARN_ON(!epc_page->ops->get_ref || !epc_page->ops->swap_pages))
-		return;
-
-	spin_lock(&sgx_global_lru_lock);
-	list_add_tail(&epc_page->list, &sgx_global_lru);
-	spin_unlock(&sgx_global_lru_lock);
-}
-
-static void sgx_page_defunct(struct sgx_epc_page *epc_page)
-{
-	if (!list_empty(&epc_page->list)) {
-		spin_lock(&sgx_global_lru_lock);
-		if (!list_empty(&epc_page->list))
-			list_del_init(&epc_page->list);
-		spin_unlock(&sgx_global_lru_lock);
-	}
-}
-
-
-static inline void sgx_reclaimable_putback(struct list_head *src)
-{
-	if (list_empty(src))
-		return;
-
-	spin_lock(&sgx_global_lru_lock);
-	list_splice_tail_init(src, &sgx_global_lru);
-	spin_unlock(&sgx_global_lru_lock);
-}
-
 void sgx_activate_page(struct sgx_epc_page *epc_page,
 		       struct sgx_encl *encl,
 		       struct sgx_encl_page *encl_page)
@@ -158,34 +120,9 @@ void sgx_activate_page(struct sgx_epc_page *epc_page,
 	encl_page->encl = encl;
 	encl_page->epc_page = epc_page;
 
-	sgx_test_and_clear_young(encl_page);
+	sgx_test_and_clear_young(epc_page);
 
 	sgx_page_reclaimable(epc_page);
-}
-
-static void sgx_isolate_pages(struct list_head *dst,
-			      unsigned long nr_to_scan)
-{
-	unsigned long i;
-	struct sgx_epc_page *entry;
-
-	spin_lock(&sgx_global_lru_lock);
-
-	for (i = 0; i < nr_to_scan; i++) {
-		if (list_empty(&sgx_global_lru))
-			break;
-
-		entry = list_first_entry(&sgx_global_lru,
-					 struct sgx_epc_page,
-					 list);
-
-		if (!entry->ops->get_ref(entry))
-			list_del_init(&entry->list);
-		else
-			list_move_tail(&entry->list, dst);
-	}
-
-	spin_unlock(&sgx_global_lru_lock);
 }
 
 static int __sgx_ewb(struct sgx_encl *encl,
@@ -313,7 +250,7 @@ static inline void sgx_age_pages(struct list_head *swap,
 		return;
 
 	list_for_each_entry_safe(entry, tmp, swap, list) {
-		if (sgx_test_and_clear_young(ENCL_PAGE(entry)))
+		if (sgx_test_and_clear_young(entry))
 			list_move_tail(&entry->list, skip);
 	}
 }
@@ -408,109 +345,6 @@ struct sgx_epc_operations encl_page_ops = {
         .get_ref = sgx_encl_get_ref,
         .swap_pages = sgx_encl_swap_pages,
 };
-
-static void sgx_swap_pages(unsigned long nr_to_scan)
-{
-        struct sgx_epc_page *entry;
-
-        LIST_HEAD(iso);
-
-        sgx_isolate_pages(&iso, nr_to_scan);
-
-        while (!list_empty(&iso)) {
-                entry = list_first_entry(&iso, struct sgx_epc_page, list);
-                entry->ops->swap_pages(entry, &iso);
-        }
-}
-
-static int ksgxswapd(void *p)
-{
-	set_freezable();
-
-	while (!kthread_should_stop()) {
-		if (try_to_freeze())
-			continue;
-
-		wait_event_freezable(ksgxswapd_waitq,
-				     kthread_should_stop() ||
-				     sgx_nr_free_pages < sgx_nr_high_pages);
-
-		if (sgx_nr_free_pages < sgx_nr_high_pages)
-			sgx_swap_pages(SGX_NR_SWAP_CLUSTER_MAX);
-	}
-
-	pr_info("%s: done\n", __func__);
-	return 0;
-}
-
-int sgx_page_cache_init(void)
-{
-	struct task_struct *tmp;
-
-	sgx_nr_high_pages = 2 * sgx_nr_low_pages;
-
-	tmp = kthread_run(ksgxswapd, NULL, "ksgxswapd");
-	if (!IS_ERR(tmp))
-		ksgxswapd_tsk = tmp;
-	return PTR_ERR_OR_ZERO(tmp);
-}
-
-void sgx_page_cache_teardown(void)
-{
-	if (ksgxswapd_tsk) {
-		kthread_stop(ksgxswapd_tsk);
-		ksgxswapd_tsk = NULL;
-	}
-}
-
-/**
- * sgx_alloc_page - allocate an EPC page
- * @flags:	allocation flags
- * @owner:	the object that will own the EPC page
- * @ops:	callback operations required for allocating an EPC page
- *
- * Try to grab a page from the free EPC page list. If there is a free page
- * available, it is returned to the caller. If called with SGX_ALLOC_ATOMIC,
- * the function will return immediately if the list is empty. Otherwise, it
- * will swap pages up until there is a free page available. Before returning
- * the low watermark is checked and ksgxswapd is waken up if we are below it.
- *
- * Return: an EPC page or a system error code
- */
-struct sgx_epc_page *sgx_alloc_page(unsigned int flags, void *owner,
-				    struct sgx_epc_operations *ops)
-{
-	struct sgx_epc_page *entry;
-
-	for ( ; ; ) {
-		entry = sgx_alloc_page_fast(owner, ops);
-		if (entry)
-			break;
-
-		if (list_empty(&sgx_global_lru)) {
-			entry = ERR_PTR(-ENOMEM);
-			break;
-		}
-
-		if (flags & SGX_ALLOC_ATOMIC) {
-			entry = ERR_PTR(-EBUSY);
-			break;
-		}
-
-		if (signal_pending(current)) {
-			entry = ERR_PTR(-ERESTARTSYS);
-			break;
-		}
-
-		sgx_swap_pages(SGX_NR_SWAP_CLUSTER_MAX);
-		schedule();
-	}
-
-	if (sgx_nr_free_pages < sgx_nr_low_pages)
-		wake_up(&ksgxswapd_waitq);
-
-	return entry;
-}
 
 struct sgx_epc_page *sgx_encl_alloc_page(unsigned int flags,
 					 struct sgx_encl_page *owner)

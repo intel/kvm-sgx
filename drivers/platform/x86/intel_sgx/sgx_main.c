@@ -303,16 +303,11 @@ static int sgx_dev_init(struct device *parent)
 	if (ret)
 		return ret;
 
-	ret = sgx_page_cache_init();
-	if (ret)
-		return ret;
-
 	sgx_add_page_wq = alloc_workqueue("intel_sgx-add-page-wq",
 					  WQ_UNBOUND | WQ_FREEZABLE, 1);
 	if (!sgx_add_page_wq) {
 		pr_err("intel_sgx: alloc_workqueue() failed\n");
-		ret = -ENOMEM;
-		goto out_teardown;
+		return -ENOMEM;
 	}
 
 	ret = sgx_le_init(&sgx_le_ctx);
@@ -328,8 +323,6 @@ out_le:
 	sgx_le_exit(&sgx_le_ctx);
 out_workqueue:
 	destroy_workqueue(sgx_add_page_wq);
-out_teardown:
-	sgx_page_cache_teardown();
 	return ret;
 }
 
@@ -356,7 +349,6 @@ static int sgx_drv_remove(struct platform_device *pdev)
 	sgx_le_exit(&sgx_le_ctx);
 
 	destroy_workqueue(sgx_add_page_wq);
-	sgx_page_cache_teardown();
 
 	return 0;
 }

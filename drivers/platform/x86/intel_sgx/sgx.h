@@ -77,10 +77,6 @@
 
 #define SGX_VA_SLOT_COUNT 512
 
-enum sgx_alloc_flags {
-	SGX_ALLOC_ATOMIC	= BIT(0),
-};
-
 struct sgx_va_page {
 	struct sgx_epc_page *epc_page;
 	DECLARE_BITMAP(slots, SGX_VA_SLOT_COUNT);
@@ -218,13 +214,9 @@ int sgx_get_key_hash_simple(const void *modulus, void *hash);
 extern struct mutex sgx_encl_mutex;
 extern struct list_head sgx_encl_list;
 
-int sgx_page_cache_init(void);
-void sgx_page_cache_teardown(void);
 void sgx_activate_page(struct sgx_epc_page *epc_page,
 		       struct sgx_encl *encl,
 		       struct sgx_encl_page *encl_page);
-struct sgx_epc_page *sgx_alloc_page(unsigned int flags, void *owner,
-				    struct sgx_epc_operations *ops);
 struct sgx_epc_page *sgx_encl_alloc_page(unsigned int flags,
 					 struct sgx_encl_page *owner);
 void sgx_drv_free_page(struct sgx_epc_page *entry, struct sgx_encl *encl);
