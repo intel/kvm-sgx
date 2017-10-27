@@ -70,12 +70,20 @@
 bool sgx_enabled __ro_after_init = false;
 EXPORT_SYMBOL(sgx_enabled);
 
+#define SGX_NR_EPC_PAGES_TO_SCAN 16
+#define SGX_NR_LOW_EPC_PAGES_DEFAULT 32
+
 static unsigned int sgx_nr_total_epc_pages __ro_after_init;
-unsigned int sgx_nr_free_pages;
-EXPORT_SYMBOL(sgx_nr_free_pages);
+static unsigned int sgx_nr_free_pages;
+static unsigned int sgx_nr_low_pages = SGX_NR_LOW_EPC_PAGES_DEFAULT;
+static unsigned int sgx_nr_high_pages = SGX_NR_LOW_EPC_PAGES_DEFAULT * 2;
+static struct task_struct *ksgxswapd_tsk;
+static DECLARE_WAIT_QUEUE_HEAD(ksgxswapd_waitq);
 
 static LIST_HEAD(sgx_free_list);
 static DEFINE_SPINLOCK(sgx_free_list_lock);
+static LIST_HEAD(sgx_global_lru);
+static DEFINE_SPINLOCK(sgx_global_lru_lock);
 
 struct sgx_epc_bank {
 	unsigned long pa;
@@ -88,8 +96,101 @@ struct sgx_epc_bank {
 static struct sgx_epc_bank sgx_epc_banks[SGX_MAX_EPC_BANKS] __ro_after_init;
 static int sgx_nr_epc_banks __ro_after_init;
 
-struct sgx_epc_page *sgx_alloc_page_fast(void *owner,
-					 struct sgx_epc_operations *ops)
+void sgx_page_reclaimable(struct sgx_epc_page *epc_page)
+{
+	if (WARN_ON(!epc_page->ops->get_ref || !epc_page->ops->swap_pages))
+		return;
+
+	spin_lock(&sgx_global_lru_lock);
+	list_add_tail(&epc_page->list, &sgx_global_lru);
+	spin_unlock(&sgx_global_lru_lock);
+}
+EXPORT_SYMBOL(sgx_page_reclaimable);
+
+void sgx_reclaimable_putback(struct list_head *src)
+{
+	if (list_empty(src))
+		return;
+
+	spin_lock(&sgx_global_lru_lock);
+	list_splice_tail_init(src, &sgx_global_lru);
+	spin_unlock(&sgx_global_lru_lock);
+}
+EXPORT_SYMBOL(sgx_reclaimable_putback);
+
+void sgx_page_defunct(struct sgx_epc_page *epc_page)
+{
+	if (!list_empty(&epc_page->list)) {
+		spin_lock(&sgx_global_lru_lock);
+		if (!list_empty(&epc_page->list))
+			list_del_init(&epc_page->list);
+		spin_unlock(&sgx_global_lru_lock);
+	}
+}
+EXPORT_SYMBOL(sgx_page_defunct);
+
+static void sgx_isolate_pages(struct list_head *dst,
+			      unsigned long nr_to_scan)
+{
+	unsigned long i;
+	struct sgx_epc_page *entry;
+
+	spin_lock(&sgx_global_lru_lock);
+
+	for (i = 0; i < nr_to_scan; i++) {
+		if (list_empty(&sgx_global_lru))
+			break;
+
+		entry = list_first_entry(&sgx_global_lru,
+					 struct sgx_epc_page,
+					 list);
+
+		if (!entry->ops->get_ref(entry))
+			list_del_init(&entry->list);
+		else
+			list_move_tail(&entry->list, dst);
+	}
+
+	spin_unlock(&sgx_global_lru_lock);
+}
+
+static void sgx_swap_pages(unsigned long nr_to_scan)
+{
+	struct sgx_epc_page *entry;
+
+	LIST_HEAD(iso);
+
+	sgx_isolate_pages(&iso, nr_to_scan);
+
+	while (!list_empty(&iso)) {
+		entry = list_first_entry(&iso, struct sgx_epc_page, list);
+		entry->ops->swap_pages(entry, &iso);
+	}
+}
+
+static int ksgxswapd(void *p)
+{
+	set_freezable();
+
+	while (!kthread_should_stop()) {
+		if (try_to_freeze())
+			continue;
+
+		wait_event_freezable(ksgxswapd_waitq,
+				     kthread_should_stop() ||
+				     sgx_nr_free_pages < sgx_nr_high_pages);
+
+		if (sgx_nr_free_pages < sgx_nr_high_pages)
+			sgx_swap_pages(SGX_NR_EPC_PAGES_TO_SCAN);
+	}
+
+	pr_info("%s: done\n", __func__);
+	return 0;
+}
+
+
+static struct sgx_epc_page *sgx_alloc_page_fast(void *owner,
+						struct sgx_epc_operations *ops)
 {
 	struct sgx_epc_page *entry = NULL;
 
@@ -111,11 +212,61 @@ struct sgx_epc_page *sgx_alloc_page_fast(void *owner,
 
 	return entry;
 }
-EXPORT_SYMBOL(sgx_alloc_page_fast);
+
+/**
+ * sgx_alloc_page - allocate an EPC page
+ * @flags:	allocation flags
+ * @owner:	the object that will own the EPC page
+ * @ops:	callback operations required for allocating an EPC page
+ *
+ * Try to grab a page from the free EPC page list. If there is a free page
+ * available, it is returned to the caller. If called with SGX_ALLOC_ATOMIC,
+ * the function will return immediately if the list is empty. Otherwise, it
+ * will swap pages up until there is a free page available. Before returning
+ * the low watermark is checked and ksgxswapd is waken up if we are below it.
+ *
+ * Return: an EPC page or a system error code
+ */
+struct sgx_epc_page *sgx_alloc_page(unsigned int flags, void *owner,
+				    struct sgx_epc_operations *ops)
+{
+	struct sgx_epc_page *entry;
+
+	for ( ; ; ) {
+		entry = sgx_alloc_page_fast(owner, ops);
+		if (entry)
+			break;
+
+		if (list_empty(&sgx_global_lru)) {
+			entry = ERR_PTR(-ENOMEM);
+			break;
+		}
+
+		if (flags & SGX_ALLOC_ATOMIC) {
+			entry = ERR_PTR(-EBUSY);
+			break;
+		}
+
+		if (signal_pending(current)) {
+			entry = ERR_PTR(-ERESTARTSYS);
+			break;
+		}
+
+		sgx_swap_pages(SGX_NR_EPC_PAGES_TO_SCAN);
+		schedule();
+	}
+
+	if (sgx_nr_free_pages < sgx_nr_low_pages)
+		wake_up(&ksgxswapd_waitq);
+
+	return entry;
+}
+EXPORT_SYMBOL(sgx_alloc_page);
 
 void sgx_free_page(struct sgx_epc_page *entry)
 {
-	BUG_ON(!list_empty(&entry->list));
+	if (WARN_ON(!list_empty(&entry->list)))
+		sgx_page_defunct(entry);
 
 	entry->ops = NULL;
 	entry->owner = NULL;
@@ -185,6 +336,26 @@ static __init int sgx_check_support(void) {
 	return 0;
 }
 
+static __init void sgx_teardown_epc(void)
+{
+#ifdef CONFIG_X86_64
+	int i;
+#endif
+	struct sgx_epc_page *entry, *tmp;
+
+	spin_lock(&sgx_free_list_lock);
+	list_for_each_entry_safe(entry, tmp, &sgx_free_list, list) {
+		list_del(&entry->list);
+		kfree(entry);
+	}
+	spin_unlock(&sgx_free_list_lock);
+
+#ifdef CONFIG_X86_64
+	for (i = 0; i < sgx_nr_epc_banks; i++)
+		iounmap((void *)sgx_epc_banks[i].va);
+#endif
+}
+
 static __init int sgx_add_epc_bank(resource_size_t start, unsigned long size, int bank)
 {
 	unsigned long i;
@@ -209,7 +380,7 @@ static __init int sgx_add_epc_bank(resource_size_t start, unsigned long size, in
 	spin_unlock(&sgx_free_list_lock);
 	return 0;
 err_freelist:
-	list_for_each_entry(entry, &sgx_free_list, list)
+	list_for_each_entry(entry, &epc_pages, list)
 		kfree(entry);
 	return -ENOMEM;
 }
@@ -267,6 +438,14 @@ static __init int sgx_init_epc(void)
 	return ret;
 }
 
+static int sgx_init_swapd(void)
+{
+       struct task_struct *tmp = kthread_run(ksgxswapd, NULL, "ksgxswapd");
+       if (!IS_ERR(tmp))
+               ksgxswapd_tsk = tmp;
+       return PTR_ERR_OR_ZERO(tmp);
+}
+
 static __init int sgx_init(void)
 {
 	int ret;
@@ -278,6 +457,12 @@ static __init int sgx_init(void)
 	ret = sgx_init_epc();
 	if (ret)
 		return ret;
+
+	ret = sgx_init_swapd();
+	if (ret) {
+		sgx_teardown_epc();
+		return ret;
+	}
 
 	sgx_enabled = true;
 
