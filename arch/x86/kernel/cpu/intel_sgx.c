@@ -70,6 +70,77 @@
 bool sgx_enabled __ro_after_init = false;
 EXPORT_SYMBOL(sgx_enabled);
 
+static unsigned int sgx_nr_total_epc_pages __ro_after_init;
+unsigned int sgx_nr_free_pages;
+EXPORT_SYMBOL(sgx_nr_free_pages);
+
+static LIST_HEAD(sgx_free_list);
+static DEFINE_SPINLOCK(sgx_free_list_lock);
+
+struct sgx_epc_bank {
+	unsigned long pa;
+#ifdef CONFIG_X86_64
+	unsigned long va;
+#endif
+	unsigned long size;
+};
+#define SGX_MAX_EPC_BANKS 8
+static struct sgx_epc_bank sgx_epc_banks[SGX_MAX_EPC_BANKS] __ro_after_init;
+static int sgx_nr_epc_banks __ro_after_init;
+
+struct sgx_epc_page *sgx_alloc_page_fast(void)
+{
+	struct sgx_epc_page *entry = NULL;
+
+	spin_lock(&sgx_free_list_lock);
+
+	if (!list_empty(&sgx_free_list)) {
+		entry = list_first_entry(&sgx_free_list, struct sgx_epc_page,
+					 list);
+		list_del_init(&entry->list);
+		sgx_nr_free_pages--;
+	}
+
+	spin_unlock(&sgx_free_list_lock);
+
+	return entry;
+}
+EXPORT_SYMBOL(sgx_alloc_page_fast);
+
+void sgx_free_page(struct sgx_epc_page *entry)
+{
+	BUG_ON(!list_empty(&entry->list));
+
+	entry->owner = NULL;
+
+	spin_lock(&sgx_free_list_lock);
+	list_add(&entry->list, &sgx_free_list);
+	sgx_nr_free_pages++;
+	spin_unlock(&sgx_free_list_lock);
+}
+EXPORT_SYMBOL(sgx_free_page);
+
+void *sgx_get_page(struct sgx_epc_page *entry)
+{
+#ifdef CONFIG_X86_32
+	return kmap_atomic_pfn(PFN_DOWN(entry->pa));
+#else
+	int i = ((entry->pa) & ~PAGE_MASK);
+	return (void *)(sgx_epc_banks[i].va +
+		((entry->pa & PAGE_MASK) - sgx_epc_banks[i].pa));
+#endif
+}
+EXPORT_SYMBOL(sgx_get_page);
+
+void sgx_put_page(void *epc_page_vaddr)
+{
+#ifdef CONFIG_X86_32
+	kunmap_atomic(epc_page_vaddr);
+#else
+#endif
+}
+EXPORT_SYMBOL(sgx_put_page);
+
 static __init int sgx_check_support(void) {
 	unsigned int eax, ebx, ecx, edx;
 	unsigned long fc;
@@ -107,11 +178,97 @@ static __init int sgx_check_support(void) {
 	return 0;
 }
 
+static __init int sgx_add_epc_bank(resource_size_t start, unsigned long size, int bank)
+{
+	unsigned long i;
+	struct sgx_epc_page *new_epc_page, *entry;
+	unsigned int nr_pages = 0;
+	LIST_HEAD(epc_pages);
+
+	for (i = 0; i < size; i += PAGE_SIZE) {
+		new_epc_page = kzalloc(sizeof(*new_epc_page), GFP_KERNEL);
+		if (!new_epc_page)
+			goto err_freelist;
+		new_epc_page->pa = (start + i) | bank;
+
+		list_add_tail(&new_epc_page->list, &epc_pages);
+		nr_pages++;
+	}
+
+	spin_lock(&sgx_free_list_lock);
+	list_splice_tail(&epc_pages, &sgx_free_list);
+	sgx_nr_total_epc_pages += nr_pages;
+	sgx_nr_free_pages += nr_pages;
+	spin_unlock(&sgx_free_list_lock);
+	return 0;
+err_freelist:
+	list_for_each_entry(entry, &sgx_free_list, list)
+		kfree(entry);
+	return -ENOMEM;
+}
+
+static __init int sgx_init_epc(void)
+{
+	int i, ret;
+	unsigned int eax, ebx, ecx, edx;
+	unsigned long pa, size;
+
+	ret = -ENODEV;
+
+	for (i = 0; i < SGX_MAX_EPC_BANKS; i++) {
+		cpuid_count(SGX_CPUID, i + 2, &eax, &ebx, &ecx, &edx);
+		if (!(eax & 0xf))
+			break;
+
+		pa = ((u64)(ebx & 0xfffff) << 32) + (u64)(eax & 0xfffff000);
+		size = ((u64)(edx & 0xfffff) << 32) + (u64)(ecx & 0xfffff000);
+
+		pr_info("intel_sgx: EPC bank 0x%lx-0x%lx\n", pa, pa + size);
+
+		sgx_epc_banks[i].pa = pa;
+		sgx_epc_banks[i].size = size;
+	}
+
+	sgx_nr_epc_banks = i;
+
+	for (i = 0; i < sgx_nr_epc_banks; i++) {
+#ifdef CONFIG_X86_64
+		sgx_epc_banks[i].va = (unsigned long)
+			ioremap_cache(sgx_epc_banks[i].pa,
+				sgx_epc_banks[i].size);
+		if (!sgx_epc_banks[i].va) {
+			pr_warn("intel_sgx: ioremap_cache of EPC failed\n");
+			ret = -ENOMEM;
+			break;
+		}
+#endif
+		ret = sgx_add_epc_bank(sgx_epc_banks[i].pa,
+				       sgx_epc_banks[i].size, i);
+		if (ret) {
+			pr_warn("intel_sgx: sgx_add_epc_bank failed\n");
+#ifdef CONFIG_X86_64
+			iounmap((void *)sgx_epc_banks[i].va);
+#endif
+			break;
+		}
+	}
+
+	sgx_nr_epc_banks = i;
+
+	if (sgx_nr_epc_banks)
+		ret = 0;
+	return ret;
+}
+
 static __init int sgx_init(void)
 {
 	int ret;
 
 	ret = sgx_check_support();
+	if (ret)
+		return ret;
+
+	ret = sgx_init_epc();
 	if (ret)
 		return ret;
 
