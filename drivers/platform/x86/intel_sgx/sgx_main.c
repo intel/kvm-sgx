@@ -82,9 +82,6 @@ MODULE_VERSION(DRV_VERSION);
 
 extern struct sgx_sigstruct sgx_le_ss;
 struct workqueue_struct *sgx_add_page_wq;
-#define SGX_MAX_EPC_BANKS 8
-struct sgx_epc_bank sgx_epc_banks[SGX_MAX_EPC_BANKS];
-int sgx_nr_epc_banks;
 u64 sgx_encl_size_max_32;
 u64 sgx_encl_size_max_64;
 u64 sgx_xfrm_mask = 0x3;
@@ -271,8 +268,6 @@ static int sgx_dev_init(struct device *parent)
 	struct sgx_context *sgx_dev;
 	unsigned int eax, ebx, ecx, edx;
 	unsigned long fc;
-	unsigned long pa;
-	unsigned long size;
 	int ret;
 	int i;
 
@@ -308,52 +303,16 @@ static int sgx_dev_init(struct device *parent)
 	if (ret)
 		return ret;
 
-	for (i = 0; i < SGX_MAX_EPC_BANKS; i++) {
-		cpuid_count(SGX_CPUID, i + SGX_CPUID_EPC_BANKS, &eax, &ebx,
-			    &ecx, &edx);
-		if (!(eax & 0xf))
-			break;
-
-		pa = ((u64)(ebx & 0xfffff) << 32) + (u64)(eax & 0xfffff000);
-		size = ((u64)(edx & 0xfffff) << 32) + (u64)(ecx & 0xfffff000);
-
-		dev_info(parent, "EPC bank 0x%lx-0x%lx\n", pa, pa + size);
-
-		sgx_epc_banks[i].pa = pa;
-		sgx_epc_banks[i].size = size;
-	}
-
-	sgx_nr_epc_banks = i;
-
-	for (i = 0; i < sgx_nr_epc_banks; i++) {
-#ifdef CONFIG_X86_64
-		sgx_epc_banks[i].va = (unsigned long)
-			ioremap_cache(sgx_epc_banks[i].pa,
-				      sgx_epc_banks[i].size);
-		if (!sgx_epc_banks[i].va) {
-			sgx_nr_epc_banks = i;
-			ret = -ENOMEM;
-			goto out_iounmap;
-		}
-#endif
-		ret = sgx_add_epc_bank(sgx_epc_banks[i].pa,
-				       sgx_epc_banks[i].size, i);
-		if (ret) {
-			sgx_nr_epc_banks = i + 1;
-			goto out_iounmap;
-		}
-	}
-
 	ret = sgx_page_cache_init();
 	if (ret)
-		goto out_iounmap;
+		return ret;
 
 	sgx_add_page_wq = alloc_workqueue("intel_sgx-add-page-wq",
 					  WQ_UNBOUND | WQ_FREEZABLE, 1);
 	if (!sgx_add_page_wq) {
 		pr_err("intel_sgx: alloc_workqueue() failed\n");
 		ret = -ENOMEM;
-		goto out_iounmap;
+		goto out_teardown;
 	}
 
 	ret = sgx_le_init(&sgx_le_ctx);
@@ -369,11 +328,8 @@ out_le:
 	sgx_le_exit(&sgx_le_ctx);
 out_workqueue:
 	destroy_workqueue(sgx_add_page_wq);
-out_iounmap:
-#ifdef CONFIG_X86_64
-	for (i = 0; i < sgx_nr_epc_banks; i++)
-		iounmap((void *)sgx_epc_banks[i].va);
-#endif
+out_teardown:
+	sgx_page_cache_teardown();
 	return ret;
 }
 
@@ -394,17 +350,12 @@ static int sgx_drv_remove(struct platform_device *pdev)
 {
 	struct device *parent = &pdev->dev;
 	struct sgx_context *ctx = dev_get_drvdata(parent);
-	int i;
 
 	cdev_device_del(&ctx->cdev, &ctx->dev);
 
 	sgx_le_exit(&sgx_le_ctx);
 
 	destroy_workqueue(sgx_add_page_wq);
-#ifdef CONFIG_X86_64
-	for (i = 0; i < sgx_nr_epc_banks; i++)
-		iounmap((void *)sgx_epc_banks[i].va);
-#endif
 	sgx_page_cache_teardown();
 
 	return 0;

@@ -69,15 +69,11 @@
 #define SGX_NR_LOW_EPC_PAGES_DEFAULT 32
 #define SGX_NR_SWAP_CLUSTER_MAX	16
 
-static LIST_HEAD(sgx_free_list);
-static DEFINE_SPINLOCK(sgx_free_list_lock);
 static LIST_HEAD(sgx_global_lru);
 static DEFINE_SPINLOCK(sgx_global_lru_lock);
 
 LIST_HEAD(sgx_encl_list);
 DEFINE_MUTEX(sgx_encl_mutex);
-static unsigned int sgx_nr_total_epc_pages;
-static unsigned int sgx_nr_free_pages;
 static unsigned int sgx_nr_low_pages = SGX_NR_LOW_EPC_PAGES_DEFAULT;
 static unsigned int sgx_nr_high_pages;
 static struct task_struct *ksgxswapd_tsk;
@@ -408,37 +404,6 @@ static int ksgxswapd(void *p)
 	return 0;
 }
 
-int sgx_add_epc_bank(resource_size_t start, unsigned long size, int bank)
-{
-	unsigned long i;
-	struct sgx_epc_page *new_epc_page, *entry;
-	struct list_head *parser, *temp;
-
-	for (i = 0; i < size; i += PAGE_SIZE) {
-		new_epc_page = kzalloc(sizeof(*new_epc_page), GFP_KERNEL);
-		if (!new_epc_page)
-			goto err_freelist;
-		new_epc_page->pa = (start + i) | bank;
-
-		spin_lock(&sgx_free_list_lock);
-		list_add_tail(&new_epc_page->list, &sgx_free_list);
-		sgx_nr_total_epc_pages++;
-		sgx_nr_free_pages++;
-		spin_unlock(&sgx_free_list_lock);
-	}
-
-	return 0;
-err_freelist:
-	list_for_each_safe(parser, temp, &sgx_free_list) {
-		spin_lock(&sgx_free_list_lock);
-		entry = list_entry(parser, struct sgx_epc_page, list);
-		list_del(&entry->list);
-		spin_unlock(&sgx_free_list_lock);
-		kfree(entry);
-	}
-	return -ENOMEM;
-}
-
 int sgx_page_cache_init(void)
 {
 	struct task_struct *tmp;
@@ -453,39 +418,10 @@ int sgx_page_cache_init(void)
 
 void sgx_page_cache_teardown(void)
 {
-	struct sgx_epc_page *entry;
-	struct list_head *parser, *temp;
-
 	if (ksgxswapd_tsk) {
 		kthread_stop(ksgxswapd_tsk);
 		ksgxswapd_tsk = NULL;
 	}
-
-	spin_lock(&sgx_free_list_lock);
-	list_for_each_safe(parser, temp, &sgx_free_list) {
-		entry = list_entry(parser, struct sgx_epc_page, list);
-		list_del(&entry->list);
-		kfree(entry);
-	}
-	spin_unlock(&sgx_free_list_lock);
-}
-
-static struct sgx_epc_page *sgx_alloc_page_fast(void)
-{
-	struct sgx_epc_page *entry = NULL;
-
-	spin_lock(&sgx_free_list_lock);
-
-	if (!list_empty(&sgx_free_list)) {
-		entry = list_first_entry(&sgx_free_list, struct sgx_epc_page,
-					 list);
-		list_del_init(&entry->list);
-		sgx_nr_free_pages--;
-	}
-
-	spin_unlock(&sgx_free_list_lock);
-
-	return entry;
 }
 
 /**
@@ -558,30 +494,5 @@ void sgx_drv_free_page(struct sgx_epc_page *entry, struct sgx_encl *encl)
 	if (ret)
 		sgx_crit(encl, "EREMOVE returned %d\n", ret);
 
-	entry->owner = NULL;
-
-	spin_lock(&sgx_free_list_lock);
-	list_add(&entry->list, &sgx_free_list);
-	sgx_nr_free_pages++;
-	spin_unlock(&sgx_free_list_lock);
-}
-
-void *sgx_get_page(struct sgx_epc_page *entry)
-{
-#ifdef CONFIG_X86_32
-	return kmap_atomic_pfn(PFN_DOWN(entry->pa));
-#else
-	int i = ((entry->pa) & ~PAGE_MASK);
-
-	return (void *)(sgx_epc_banks[i].va +
-		((entry->pa & PAGE_MASK) - sgx_epc_banks[i].pa));
-#endif
-}
-
-void sgx_put_page(void *epc_page_vaddr)
-{
-#ifdef CONFIG_X86_32
-	kunmap_atomic(epc_page_vaddr);
-#else
-#endif
+	sgx_free_page(entry);
 }
