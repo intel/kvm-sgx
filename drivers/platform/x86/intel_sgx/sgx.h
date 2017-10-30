@@ -147,7 +147,6 @@ struct sgx_encl {
 	struct mm_struct *mm;
 	struct file *backing;
 	struct file *pcmd;
-	struct list_head load_list;
 	struct kref refcount;
 	unsigned long base;
 	unsigned long size;
