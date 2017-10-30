@@ -536,7 +536,6 @@ static struct sgx_encl *sgx_encl_alloc(struct sgx_secs *secs)
 	INIT_LIST_HEAD(&encl->add_page_reqs);
 	INIT_LIST_HEAD(&encl->va_pages);
 	INIT_RADIX_TREE(&encl->page_tree, GFP_KERNEL);
-	INIT_LIST_HEAD(&encl->load_list);
 	INIT_LIST_HEAD(&encl->encl_list);
 	mutex_init(&encl->lock);
 	INIT_WORK(&encl->add_page_work, sgx_add_page_worker);
@@ -971,10 +970,8 @@ void sgx_encl_release(struct kref *ref)
 
 	radix_tree_for_each_slot(slot, &encl->page_tree, &iter, 0) {
 		entry = *slot;
-		if (entry->epc_page) {
-			list_del(&entry->epc_page->list);
+		if (entry->epc_page)
 			sgx_free_page(entry->epc_page, encl);
-		}
 		radix_tree_delete(&encl->page_tree, entry->addr >> PAGE_SHIFT);
 		kfree(entry);
 	}
