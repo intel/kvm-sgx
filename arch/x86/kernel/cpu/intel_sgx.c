@@ -88,11 +88,12 @@ struct sgx_epc_bank {
 static struct sgx_epc_bank sgx_epc_banks[SGX_MAX_EPC_BANKS] __ro_after_init;
 static int sgx_nr_epc_banks __ro_after_init;
 
-struct sgx_epc_page *sgx_alloc_page_fast(void *owner)
+struct sgx_epc_page *sgx_alloc_page_fast(void *owner,
+					 struct sgx_epc_operations *ops)
 {
 	struct sgx_epc_page *entry = NULL;
 
-	if (WARN_ON(!owner))
+	if (WARN_ON(!owner || !ops))
 		return entry;
 
 	spin_lock(&sgx_free_list_lock);
@@ -103,6 +104,7 @@ struct sgx_epc_page *sgx_alloc_page_fast(void *owner)
 		list_del_init(&entry->list);
 		sgx_nr_free_pages--;
 		entry->owner = owner;
+		entry->ops = ops;
 	}
 
 	spin_unlock(&sgx_free_list_lock);
@@ -115,6 +117,7 @@ void sgx_free_page(struct sgx_epc_page *entry)
 {
 	BUG_ON(!list_empty(&entry->list));
 
+	entry->ops = NULL;
 	entry->owner = NULL;
 
 	spin_lock(&sgx_free_list_lock);

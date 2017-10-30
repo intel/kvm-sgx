@@ -236,13 +236,22 @@ static inline int __emodt(struct sgx_secinfo *secinfo, void *epc)
 extern bool sgx_enabled;
 extern unsigned int sgx_nr_free_pages;
 
+struct sgx_epc_page;
+
+struct sgx_epc_operations {
+	int (*get_ref)(struct sgx_epc_page *epc_page);
+	void (*swap_pages)(struct sgx_epc_page *entry, struct list_head *iso);
+};
+
 struct sgx_epc_page {
 	resource_size_t pa;
 	struct list_head list;
 	void *owner;
+	struct sgx_epc_operations *ops;
 };
 
-extern struct sgx_epc_page *sgx_alloc_page_fast(void *owner);
+extern struct sgx_epc_page *sgx_alloc_page_fast(void *owner,
+						struct sgx_epc_operations *ops);
 extern void sgx_free_page(struct sgx_epc_page *entry);
 extern void *sgx_get_page(struct sgx_epc_page *entry);
 extern void sgx_put_page(void *epc_page_vaddr);
