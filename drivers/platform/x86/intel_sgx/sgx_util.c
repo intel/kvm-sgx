@@ -294,6 +294,7 @@ static struct sgx_encl_page *sgx_do_fault(struct vm_area_struct *vma,
 
 	epc_page->encl_page = entry;
 	entry->epc_page = epc_page;
+	entry->encl = encl;
 
 	if (reserve)
 		entry->flags |= SGX_ENCL_PAGE_RESERVED;
@@ -312,7 +313,7 @@ static struct sgx_encl_page *sgx_do_fault(struct vm_area_struct *vma,
 		goto out;
 	}
 
-	sgx_test_and_clear_young(entry, encl);
+	sgx_test_and_clear_young(entry);
 out:
 	mutex_unlock(&encl->lock);
 	if (epc_page)

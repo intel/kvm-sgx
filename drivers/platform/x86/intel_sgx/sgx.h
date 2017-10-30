@@ -117,6 +117,7 @@ enum sgx_encl_page_flags {
 struct sgx_encl_page {
 	unsigned long addr;
 	unsigned int flags;
+	struct sgx_encl *encl;
 	struct sgx_epc_page *epc_page;
 	struct sgx_va_page *va_page;
 	unsigned int va_offset;
@@ -215,7 +216,7 @@ long sgx_compat_ioctl(struct file *filep, unsigned int cmd, unsigned long arg);
 #endif
 
 /* Utility functions */
-int sgx_test_and_clear_young(struct sgx_encl_page *page, struct sgx_encl *encl);
+int sgx_test_and_clear_young(struct sgx_encl_page *page);
 struct page *sgx_get_backing(struct sgx_encl *encl,
 			     struct sgx_encl_page *entry,
 			     bool pcmd);

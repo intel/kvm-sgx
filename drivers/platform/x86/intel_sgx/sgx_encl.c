@@ -272,8 +272,9 @@ static bool sgx_process_add_page_req(struct sgx_add_page_req *req,
 	}
 
 	epc_page->encl_page = encl_page;
+	encl_page->encl = encl;
 	encl_page->epc_page = epc_page;
-	sgx_test_and_clear_young(encl_page, encl);
+	sgx_test_and_clear_young(encl_page);
 	list_add_tail(&epc_page->list, &encl->load_list);
 
 	return true;
