@@ -100,22 +100,21 @@ static int sgx_test_and_clear_young_cb(pte_t *ptep, pgtable_t token,
 /**
  * sgx_test_and_clear_young() - Test and reset the accessed bit
  * @page:	enclave EPC page to be tested for recent access
- * @encl:	enclave which owns @page
  *
  * Checks the Access (A) bit from the PTE corresponding to the
  * enclave page and clears it.  Returns 1 if the page has been
  * recently accessed and 0 if not.
  */
-int sgx_test_and_clear_young(struct sgx_encl_page *page, struct sgx_encl *encl)
+int sgx_test_and_clear_young(struct sgx_encl_page *page)
 {
 	struct vm_area_struct *vma;
 	int ret;
 
-	ret = sgx_encl_find(encl->mm, page->addr, &vma);
+	ret = sgx_encl_find(page->encl->mm, page->addr, &vma);
 	if (ret)
 		return 0;
 
-	if (encl != vma->vm_private_data)
+	if (page->encl != vma->vm_private_data)
 		return 0;
 
 	return apply_to_page_range(vma->vm_mm, page->addr, PAGE_SIZE,
@@ -214,7 +213,7 @@ static void sgx_isolate_pages(struct sgx_encl *encl,
 					 struct sgx_epc_page,
 					 list);
 
-		if (!sgx_test_and_clear_young(entry->encl_page, encl) &&
+		if (!sgx_test_and_clear_young(entry->encl_page) &&
 		    !(entry->encl_page->flags & SGX_ENCL_PAGE_RESERVED)) {
 			entry->encl_page->flags |= SGX_ENCL_PAGE_RESERVED;
 			list_move_tail(&entry->list, dst);
