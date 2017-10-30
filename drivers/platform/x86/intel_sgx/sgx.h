@@ -223,7 +223,10 @@ void sgx_page_cache_teardown(void);
 void sgx_activate_page(struct sgx_epc_page *epc_page,
 		       struct sgx_encl *encl,
 		       struct sgx_encl_page *encl_page);
-struct sgx_epc_page *sgx_alloc_page(unsigned int flags, void *owner);
+struct sgx_epc_page *sgx_alloc_page(unsigned int flags, void *owner,
+				    struct sgx_epc_operations *ops);
+struct sgx_epc_page *sgx_encl_alloc_page(unsigned int flags,
+					 struct sgx_encl_page *owner);
 void sgx_drv_free_page(struct sgx_epc_page *entry, struct sgx_encl *encl);
 void sgx_eblock(struct sgx_encl *encl, struct sgx_epc_page *epc_page);
 void sgx_etrack(struct sgx_encl *encl);

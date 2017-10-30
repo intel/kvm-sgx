@@ -122,6 +122,9 @@ static int sgx_test_and_clear_young(struct sgx_encl_page *page)
 
 static void sgx_page_reclaimable(struct sgx_epc_page *epc_page)
 {
+	if (WARN_ON(!epc_page->ops->get_ref || !epc_page->ops->swap_pages))
+		return;
+
 	spin_lock(&sgx_global_lru_lock);
 	list_add_tail(&epc_page->list, &sgx_global_lru);
 	spin_unlock(&sgx_global_lru_lock);
@@ -135,6 +138,17 @@ static void sgx_page_defunct(struct sgx_epc_page *epc_page)
 			list_del_init(&epc_page->list);
 		spin_unlock(&sgx_global_lru_lock);
 	}
+}
+
+
+static inline void sgx_reclaimable_putback(struct list_head *src)
+{
+	if (list_empty(src))
+		return;
+
+	spin_lock(&sgx_global_lru_lock);
+	list_splice_tail_init(src, &sgx_global_lru);
+	spin_unlock(&sgx_global_lru_lock);
 }
 
 void sgx_activate_page(struct sgx_epc_page *epc_page,
@@ -165,8 +179,7 @@ static void sgx_isolate_pages(struct list_head *dst,
 					 struct sgx_epc_page,
 					 list);
 
-		if ((ENCL_PAGE(entry)->encl->flags & SGX_ENCL_DEAD) ||
-		    !kref_get_unless_zero(&ENCL_PAGE(entry)->encl->refcount))
+		if (!entry->ops->get_ref(entry))
 			list_del_init(&entry->list);
 		else
 			list_move_tail(&entry->list, dst);
@@ -331,55 +344,83 @@ static inline void sgx_del_if_dead(struct sgx_encl *encl,
 	}
 }
 
-static void sgx_swap_pages(unsigned long nr_to_scan)
+static int sgx_encl_get_ref(struct sgx_epc_page *epc_page)
 {
-	struct sgx_epc_page *entry, *tmp;
-	struct sgx_encl *encl;
+	struct sgx_encl *encl = ENCL_PAGE(epc_page)->encl;
+	if (WARN_ON(!encl))
+		return 0;
 
-	LIST_HEAD(iso);
+	if (encl->flags & SGX_ENCL_DEAD)
+		return 0;
+
+	return kref_get_unless_zero(&encl->refcount);
+}
+
+static void sgx_encl_swap_pages(struct sgx_epc_page *entry,
+                                struct list_head *iso)
+{
+	struct sgx_epc_page *tmp;
+	struct sgx_encl *encl;
+	struct sgx_encl_page *page = ENCL_PAGE(entry);
+	struct sgx_epc_operations *ops = entry->ops;
+
 	LIST_HEAD(swap);
 	LIST_HEAD(skip);
 
-	sgx_isolate_pages(&iso, nr_to_scan);
+	encl = page->encl;
+	kref_get(&encl->refcount);
 
-	while (!list_empty(&iso)) {
-		entry = list_first_entry(&iso, struct sgx_epc_page, list);
-		encl = ENCL_PAGE(entry)->encl;
-		kref_get(&encl->refcount);
+	list_for_each_entry_safe(entry, tmp, iso, list) {
+		if (entry->ops != ops)
+			continue;
 
-		list_for_each_entry_safe(entry, tmp, &iso, list) {
-			if (ENCL_PAGE(entry)->encl != encl)
-				continue;
-
-			kref_put(&encl->refcount, sgx_encl_release);
-			list_move_tail(&entry->list, &swap);
-		}
-
-		down_read(&encl->mm->mmap_sem);
-
-		sgx_del_if_dead(encl, &swap, &skip);
-		sgx_age_pages(&swap, &skip);
-
-		if (!list_empty(&swap)) {
-			mutex_lock(&encl->lock);
-
-			sgx_del_if_dead(encl, &swap, &skip);
-			sgx_reserve_pages(&swap, &skip);
-			sgx_write_pages(encl, &swap);
-
-			mutex_unlock(&encl->lock);
-		}
-
-		up_read(&encl->mm->mmap_sem);
-
-		if (!list_empty(&skip)) {
-			spin_lock(&sgx_global_lru_lock);
-			list_splice_tail_init(&skip, &sgx_global_lru);
-			spin_unlock(&sgx_global_lru_lock);
-		}
+		page = ENCL_PAGE(entry);
+		if (!page || page->encl != encl)
+			continue;
 
 		kref_put(&encl->refcount, sgx_encl_release);
+		list_move_tail(&entry->list, &swap);
 	}
+
+	down_read(&encl->mm->mmap_sem);
+
+	sgx_del_if_dead(encl, &swap, &skip);
+	sgx_age_pages(&swap, &skip);
+
+	if (!list_empty(&swap)) {
+		mutex_lock(&encl->lock);
+
+		sgx_del_if_dead(encl, &swap, &skip);
+		sgx_reserve_pages(&swap, &skip);
+		sgx_write_pages(encl, &swap);
+
+		mutex_unlock(&encl->lock);
+	}
+
+	up_read(&encl->mm->mmap_sem);
+
+	sgx_reclaimable_putback(&skip);
+
+	kref_put(&encl->refcount, sgx_encl_release);
+}
+
+struct sgx_epc_operations encl_page_ops = {
+        .get_ref = sgx_encl_get_ref,
+        .swap_pages = sgx_encl_swap_pages,
+};
+
+static void sgx_swap_pages(unsigned long nr_to_scan)
+{
+        struct sgx_epc_page *entry;
+
+        LIST_HEAD(iso);
+
+        sgx_isolate_pages(&iso, nr_to_scan);
+
+        while (!list_empty(&iso)) {
+                entry = list_first_entry(&iso, struct sgx_epc_page, list);
+                entry->ops->swap_pages(entry, &iso);
+        }
 }
 
 static int ksgxswapd(void *p)
@@ -426,6 +467,7 @@ void sgx_page_cache_teardown(void)
  * sgx_alloc_page - allocate an EPC page
  * @flags:	allocation flags
  * @owner:	the object that will own the EPC page
+ * @ops:	callback operations required for allocating an EPC page
  *
  * Try to grab a page from the free EPC page list. If there is a free page
  * available, it is returned to the caller. If called with SGX_ALLOC_ATOMIC,
@@ -435,12 +477,13 @@ void sgx_page_cache_teardown(void)
  *
  * Return: an EPC page or a system error code
  */
-struct sgx_epc_page *sgx_alloc_page(unsigned int flags, void *owner)
+struct sgx_epc_page *sgx_alloc_page(unsigned int flags, void *owner,
+				    struct sgx_epc_operations *ops)
 {
 	struct sgx_epc_page *entry;
 
 	for ( ; ; ) {
-		entry = sgx_alloc_page_fast(owner);
+		entry = sgx_alloc_page_fast(owner, ops);
 		if (entry)
 			break;
 
@@ -467,6 +510,12 @@ struct sgx_epc_page *sgx_alloc_page(unsigned int flags, void *owner)
 		wake_up(&ksgxswapd_waitq);
 
 	return entry;
+}
+
+struct sgx_epc_page *sgx_encl_alloc_page(unsigned int flags,
+					 struct sgx_encl_page *owner)
+{
+	return sgx_alloc_page(flags, owner, &encl_page_ops);
 }
 
 /**
