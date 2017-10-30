@@ -216,7 +216,6 @@ long sgx_compat_ioctl(struct file *filep, unsigned int cmd, unsigned long arg);
 #endif
 
 /* Utility functions */
-int sgx_test_and_clear_young(struct sgx_encl_page *page);
 struct page *sgx_get_backing(struct sgx_encl *encl,
 			     struct sgx_encl_page *entry,
 			     bool pcmd);
@@ -248,6 +247,9 @@ extern atomic_t sgx_va_pages_cnt;
 int sgx_add_epc_bank(resource_size_t start, unsigned long size, int bank);
 int sgx_page_cache_init(void);
 void sgx_page_cache_teardown(void);
+void sgx_activate_page(struct sgx_epc_page *epc_page,
+		       struct sgx_encl *encl,
+		       struct sgx_encl_page *encl_page);
 struct sgx_epc_page *sgx_alloc_page(unsigned int flags);
 void sgx_free_page(struct sgx_epc_page *entry, struct sgx_encl *encl);
 void *sgx_get_page(struct sgx_epc_page *entry);

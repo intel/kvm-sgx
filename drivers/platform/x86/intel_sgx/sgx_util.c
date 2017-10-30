@@ -296,18 +296,13 @@ static struct sgx_encl_page *sgx_do_fault(struct vm_area_struct *vma,
 
 	encl->secs_child_cnt++;
 
-	epc_page->encl_page = entry;
-	entry->epc_page = epc_page;
-	entry->encl = encl;
-
 	if (reserve)
 		entry->flags |= SGX_ENCL_PAGE_RESERVED;
 
+	sgx_activate_page(epc_page, encl, entry);
+
 	/* Do not free */
 	epc_page = NULL;
-	list_add_tail(&entry->epc_page->list, &encl->load_list);
-
-	sgx_test_and_clear_young(entry);
 out:
 	mutex_unlock(&encl->lock);
 	if (epc_page)
