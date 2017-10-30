@@ -242,7 +242,7 @@ struct sgx_epc_page {
 	void *owner;
 };
 
-extern struct sgx_epc_page *sgx_alloc_page_fast(void);
+extern struct sgx_epc_page *sgx_alloc_page_fast(void *owner);
 extern void sgx_free_page(struct sgx_epc_page *entry);
 extern void *sgx_get_page(struct sgx_epc_page *entry);
 extern void sgx_put_page(void *epc_page_vaddr);

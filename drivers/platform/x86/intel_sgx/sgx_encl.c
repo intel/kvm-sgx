@@ -242,7 +242,7 @@ static void sgx_add_page_worker(struct work_struct *work)
 		if (skip_rest)
 			goto next;
 
-		epc_page = sgx_alloc_page(0);
+		epc_page = sgx_alloc_page(0, req->encl_page);
 		if (IS_ERR(epc_page)) {
 			skip_rest = true;
 			goto next;
@@ -384,7 +384,7 @@ static int sgx_init_page(struct sgx_encl *encl, struct sgx_encl_page *entry,
 		if (!va_page)
 			return -ENOMEM;
 
-		epc_page = sgx_alloc_page(alloc_flags);
+		epc_page = sgx_alloc_page(alloc_flags, va_page);
 		if (IS_ERR(epc_page)) {
 			kfree(va_page);
 			return PTR_ERR(epc_page);
@@ -515,7 +515,7 @@ int sgx_encl_create(struct sgx_secs *secs)
 	if (IS_ERR(secs))
 		return PTR_ERR(encl);
 
-	secs_epc = sgx_alloc_page(0);
+	secs_epc = sgx_alloc_page(0, &encl->secs);
 	if (IS_ERR(secs_epc)) {
 		ret = PTR_ERR(secs_epc);
 		goto out;
