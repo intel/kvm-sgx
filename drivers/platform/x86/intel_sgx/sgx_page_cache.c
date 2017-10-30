@@ -105,7 +105,7 @@ static int sgx_test_and_clear_young_cb(pte_t *ptep, pgtable_t token,
  * enclave page and clears it.  Returns 1 if the page has been
  * recently accessed and 0 if not.
  */
-int sgx_test_and_clear_young(struct sgx_encl_page *page)
+static int sgx_test_and_clear_young(struct sgx_encl_page *page)
 {
 	struct vm_area_struct *vma;
 	int ret;
@@ -119,6 +119,20 @@ int sgx_test_and_clear_young(struct sgx_encl_page *page)
 
 	return apply_to_page_range(vma->vm_mm, page->addr, PAGE_SIZE,
 				   sgx_test_and_clear_young_cb, vma->vm_mm);
+}
+
+void sgx_activate_page(struct sgx_epc_page *epc_page,
+		       struct sgx_encl *encl,
+		       struct sgx_encl_page *encl_page)
+{
+	epc_page->encl_page = encl_page;
+
+	encl_page->encl = encl;
+	encl_page->epc_page = epc_page;
+
+	sgx_test_and_clear_young(encl_page);
+
+	list_add_tail(&epc_page->list, &encl->load_list);
 }
 
 static struct sgx_tgid_ctx *sgx_isolate_tgid_ctx(unsigned long nr_to_scan)
