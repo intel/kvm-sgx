@@ -284,12 +284,16 @@ static struct sgx_encl_page *sgx_do_fault(struct vm_area_struct *vma,
 	if (rc)
 		goto out;
 
-	/* Track the EPC page even if vm_insert_pfn fails; we need to ensure
-	 * the EPC page is properly freed and we can't do EREMOVE right away
-	 * because EREMOVE may fail due to an active cpu in the enclave.  We
-	 * can't call vm_insert_pfn before sgx_eldu because SKL signals #GP
-	 * instead of #PF if the EPC page is invalid.
-	 */
+	rc = vm_insert_pfn(vma, entry->addr, PFN_DOWN(epc_page->pa));
+	if (rc) {
+		/* Kill the enclave if vm_insert_pfn fails; failure only occurs
+		 * if there is a driver bug or an unrecoverable issue, e.g. OOM.
+		 */
+		sgx_crit(encl, "vm_insert_pfn returned %d\n", rc);
+		sgx_invalidate(encl, true);
+		goto out;
+	}
+
 	encl->secs_child_cnt++;
 
 	epc_page->encl_page = entry;
@@ -302,16 +306,6 @@ static struct sgx_encl_page *sgx_do_fault(struct vm_area_struct *vma,
 	/* Do not free */
 	epc_page = NULL;
 	list_add_tail(&entry->epc_page->list, &encl->load_list);
-
-	rc = vm_insert_pfn(vma, entry->addr, PFN_DOWN(entry->epc_page->pa));
-	if (rc) {
-		/* Kill the enclave if vm_insert_pfn fails; failure only occurs
-		 * if there is a driver bug or an unrecoverable issue, e.g. OOM.
-		 */
-		sgx_crit(encl, "vm_insert_pfn returned %d\n", rc);
-		sgx_invalidate(encl, true);
-		goto out;
-	}
 
 	sgx_test_and_clear_young(entry);
 out:
