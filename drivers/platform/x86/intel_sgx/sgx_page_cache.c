@@ -141,8 +141,6 @@ void sgx_activate_page(struct sgx_epc_page *epc_page,
 		       struct sgx_encl *encl,
 		       struct sgx_encl_page *encl_page)
 {
-	epc_page->owner = encl_page;
-
 	encl_page->encl = encl;
 	encl_page->epc_page = epc_page;
 
@@ -427,6 +425,7 @@ void sgx_page_cache_teardown(void)
 /**
  * sgx_alloc_page - allocate an EPC page
  * @flags:	allocation flags
+ * @owner:	the object that will own the EPC page
  *
  * Try to grab a page from the free EPC page list. If there is a free page
  * available, it is returned to the caller. If called with SGX_ALLOC_ATOMIC,
@@ -436,12 +435,12 @@ void sgx_page_cache_teardown(void)
  *
  * Return: an EPC page or a system error code
  */
-struct sgx_epc_page *sgx_alloc_page(unsigned int flags)
+struct sgx_epc_page *sgx_alloc_page(unsigned int flags, void *owner)
 {
 	struct sgx_epc_page *entry;
 
 	for ( ; ; ) {
-		entry = sgx_alloc_page_fast();
+		entry = sgx_alloc_page_fast(owner);
 		if (entry)
 			break;
 

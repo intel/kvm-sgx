@@ -253,7 +253,7 @@ static struct sgx_encl_page *sgx_do_fault(struct vm_area_struct *vma,
 		goto out;
 	}
 
-	epc_page = sgx_alloc_page(SGX_ALLOC_ATOMIC);
+	epc_page = sgx_alloc_page(SGX_ALLOC_ATOMIC, entry);
 	if (IS_ERR(epc_page)) {
 		rc = PTR_ERR(epc_page);
 		epc_page = NULL;
@@ -262,7 +262,7 @@ static struct sgx_encl_page *sgx_do_fault(struct vm_area_struct *vma,
 
 	/* If SECS is evicted then reload it first */
 	if (encl->flags & SGX_ENCL_SECS_EVICTED) {
-		secs_epc_page = sgx_alloc_page(SGX_ALLOC_ATOMIC);
+		secs_epc_page = sgx_alloc_page(SGX_ALLOC_ATOMIC, &encl->secs);
 		if (IS_ERR(secs_epc_page)) {
 			rc = PTR_ERR(secs_epc_page);
 			secs_epc_page = NULL;
