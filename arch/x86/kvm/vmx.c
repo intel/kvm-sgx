@@ -115,6 +115,13 @@ static u64 __read_mostly host_xss;
 static bool __read_mostly enable_pml = 1;
 module_param_named(pml, enable_pml, bool, S_IRUGO);
 
+#ifndef CONFIG_INTEL_SGX_CORE
+#define enable_sgx 0
+#else
+static bool __read_mostly enable_sgx = 1;
+module_param_named(sgx, enable_sgx, bool, S_IRUGO);
+#endif
+
 #define MSR_TYPE_R	1
 #define MSR_TYPE_W	2
 #define MSR_TYPE_RW	3
@@ -443,7 +450,8 @@ struct __packed vmcs12 {
 	u64 vm_function_control;
 	u64 eptp_list_address;
 	u64 pml_address;
-	u64 padding64[3]; /* room for future expansion */
+	u64 encls_exiting_bitmap;
+	u64 padding64[2]; /* room for future expansion */
 	/*
 	 * To allow migration of L1 (complete with its L2 guests) between
 	 * machines of different natural widths (32 or 64 bit), we cannot have
@@ -608,6 +616,7 @@ static inline void vmx_check_vmcs12_offsets(void) {
 	CHECK_OFFSET(vm_function_control, 296);
 	CHECK_OFFSET(eptp_list_address, 304);
 	CHECK_OFFSET(pml_address, 312);
+	CHECK_OFFSET(encls_exiting_bitmap, 320);
 	CHECK_OFFSET(cr0_guest_host_mask, 344);
 	CHECK_OFFSET(cr4_guest_host_mask, 352);
 	CHECK_OFFSET(cr0_read_shadow, 360);
@@ -1098,6 +1107,7 @@ static const unsigned short vmcs_field_to_offset_table[] = {
 	FIELD64(VMREAD_BITMAP, vmread_bitmap),
 	FIELD64(VMWRITE_BITMAP, vmwrite_bitmap),
 	FIELD64(XSS_EXIT_BITMAP, xss_exit_bitmap),
+	FIELD64(ENCLS_EXITING_BITMAP, encls_exiting_bitmap),
 	FIELD64(GUEST_PHYSICAL_ADDRESS, guest_physical_address),
 	FIELD64(VMCS_LINK_POINTER, vmcs_link_pointer),
 	FIELD64(GUEST_IA32_DEBUGCTL, guest_ia32_debugctl),
@@ -2198,6 +2208,11 @@ static inline bool nested_cpu_has_eptp_switching(struct vmcs12 *vmcs12)
 	return nested_cpu_has_vmfunc(vmcs12) &&
 		(vmcs12->vm_function_control &
 		 VMX_VMFUNC_EPTP_SWITCHING);
+}
+
+static inline bool nested_cpu_has_encls_exit(struct vmcs12 *vmcs12)
+{
+	return nested_cpu_has2(vmcs12, SECONDARY_EXEC_ENCLS_EXITING);
 }
 
 static inline bool is_nmi(u32 intr_info)
@@ -3601,6 +3616,17 @@ static inline bool nested_vmx_allowed(struct kvm_vcpu *vcpu)
 	return nested && guest_cpuid_has(vcpu, X86_FEATURE_VMX);
 }
 
+static inline bool sgx_allowed_in_guest(struct kvm_vcpu *vcpu)
+{
+	return enable_sgx && guest_cpuid_has(vcpu, X86_FEATURE_SGX);
+}
+
+static inline bool sgx_enabled_in_guest_bios(struct kvm_vcpu *vcpu)
+{
+	const u64 bits = FEATURE_CONTROL_SGX_ENABLE | FEATURE_CONTROL_LOCKED;
+	return (to_vmx(vcpu)->msr_ia32_feature_control & bits) == bits;
+}
+
 /*
  * nested_vmx_setup_ctls_msrs() sets up variables containing the values to be
  * returned for the various VMX controls MSRs when nested VMX is enabled.
@@ -3788,6 +3814,9 @@ static void nested_vmx_setup_ctls_msrs(struct nested_vmx_msrs *msrs, bool apicv)
 	if (enable_unrestricted_guest)
 		msrs->secondary_ctls_high |=
 			SECONDARY_EXEC_UNRESTRICTED_GUEST;
+
+	if (enable_sgx)
+		msrs->secondary_ctls_high |= SECONDARY_EXEC_ENCLS_EXITING;
 
 	/* miscellaneous data */
 	rdmsr(MSR_IA32_VMX_MISC,
@@ -4279,6 +4308,8 @@ static int vmx_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 }
 
 static void vmx_leave_nested(struct kvm_vcpu *vcpu);
+static void vmx_write_encls_bitmap(struct kvm_vcpu *vcpu,
+				   struct vmcs12 *vmcs12);
 
 /*
  * Writes msr value into into the appropriate "register".
@@ -4421,6 +4452,9 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		vmx->msr_ia32_feature_control = data;
 		if (msr_info->host_initiated && data == 0)
 			vmx_leave_nested(vcpu);
+
+		/* SGX may be enabled/disabled by guest's firmware */
+		vmx_write_encls_bitmap(vcpu, NULL);
 		break;
 	case MSR_IA32_VMX_BASIC ... MSR_IA32_VMX_VMFUNC:
 		if (!msr_info->host_initiated)
@@ -6637,6 +6671,15 @@ static void vmx_compute_secondary_exec_control(struct vcpu_vmx *vmx)
 		}
 	}
 
+	if (enable_sgx && nested) {
+		if (guest_cpuid_has(vcpu, X86_FEATURE_SGX))
+			vmx->nested.msrs.secondary_ctls_high |=
+				SECONDARY_EXEC_ENCLS_EXITING;
+		else
+			vmx->nested.msrs.secondary_ctls_high &=
+				~SECONDARY_EXEC_ENCLS_EXITING;
+	}
+
 	vmx->secondary_exec_control = exec_control;
 }
 
@@ -8083,8 +8126,10 @@ static __init int hardware_setup(void)
 	kvm_mce_cap_supported |= MCG_LMCE_P;
 
 #ifdef CONFIG_INTEL_SGX_CORE
-	/* SGX virtualization is not yet supported */
-	kvm_x86_ops->set_sgx_epc = NULL;
+	if (!sgx_enabled || !cpu_has_vmx_encls_vmexit())
+		enable_sgx = 0;
+	if (!enable_sgx)
+		kvm_x86_ops->set_sgx_epc = NULL;
 #endif
 
 	return alloc_kvm_area();
@@ -9266,14 +9311,34 @@ fail:
 	return 1;
 }
 
+static inline bool encls_leaf_enabled_in_guest(struct kvm_vcpu *vcpu, u32 leaf)
+{
+	if (!enable_sgx)
+		return false;
+
+	if (leaf >= ECREATE && leaf <= ETRACK)
+		return guest_cpuid_has(vcpu, X86_FEATURE_SGX);
+
+	if (leaf >= EAUG && leaf <= EMODT)
+		return guest_cpuid_has(vcpu, X86_FEATURE_SGX2);
+
+	return false;
+}
+
 static int handle_encls(struct kvm_vcpu *vcpu)
 {
-	/*
-	 * SGX virtualization is not yet supported.  There is no software
-	 * enable bit for SGX, so we have to trap ENCLS and inject a #UD
-	 * to prevent the guest from executing ENCLS.
-	 */
-	kvm_queue_exception(vcpu, UD_VECTOR);
+	u32 leaf = (u32)vcpu->arch.regs[VCPU_REGS_RAX];
+
+	if (!encls_leaf_enabled_in_guest(vcpu, leaf))
+		kvm_queue_exception(vcpu, UD_VECTOR);
+	else if (!sgx_enabled_in_guest_bios(vcpu))
+		kvm_inject_gp(vcpu, 0);
+	else {
+		WARN(1, "KVM: unexpected exit on ENCLS[%u]", leaf);
+		vcpu->run->exit_reason = KVM_EXIT_UNKNOWN;
+		vcpu->run->hw.hardware_exit_reason = EXIT_REASON_ENCLS;
+		return 0;
+	}
 	return 1;
 }
 
@@ -9504,6 +9569,20 @@ static bool nested_vmx_exit_handled_cr(struct kvm_vcpu *vcpu,
 	return false;
 }
 
+static bool nested_vmx_exit_handled_encls(struct kvm_vcpu *vcpu,
+					  struct vmcs12 *vmcs12)
+{
+	u32 encls_leaf;
+
+	if (!nested_cpu_has2(vmcs12, SECONDARY_EXEC_ENCLS_EXITING))
+		return false;
+
+	encls_leaf = vcpu->arch.regs[VCPU_REGS_RAX];
+	if (encls_leaf > 62)
+		encls_leaf = 63;
+	return (vmcs12->encls_exiting_bitmap & (1ULL << encls_leaf));
+}
+
 /*
  * Return 1 if we should exit from L2 to L1 to handle an exit, or 0 if we
  * should handle it ourselves in L0 (and then continue L2). Only call this
@@ -9676,8 +9755,7 @@ static bool nested_vmx_exit_reflected(struct kvm_vcpu *vcpu, u32 exit_reason)
 		/* VM functions are emulated through L2->L0 vmexits. */
 		return false;
 	case EXIT_REASON_ENCLS:
-		/* SGX is never exposed to L1 */
-		return false;
+		return nested_vmx_exit_handled_encls(vcpu, vmcs12);
 	default:
 		return true;
 	}
@@ -11137,6 +11215,139 @@ static void nested_vmx_cr_fixed1_bits_update(struct kvm_vcpu *vcpu)
 #undef cr4_fixed1_update
 }
 
+static void vmx_write_encls_bitmap(struct kvm_vcpu *vcpu,
+				   struct vmcs12 *vmcs12)
+{
+	/*
+	 * There is no software enable bit for SGX that is virtualized by
+	 * hardware, e.g. there's no CR4.SGXE, so when SGX is disabled in
+	 * the guest (either by us or by the guest's BIOS) but enabled in
+	 * the host, we have to trap all ENCLS leafs and inject #UD/#GP as
+	 * needed to emulate the expected system behavior for ENCLS.
+	 *
+	 * Note that we ignore the guest mode when writing the ENCLS bitmap
+	 * even though ENCLS will unconditionally #UD prior to VMExit when
+	 * executed in RM/V86/SMM.  Technically, we could skip writing the
+	 * bitmap when the guest is in RM/V86/SMM, but that approach would
+	 * require adding hooks into every mode-change flow, and for little
+	 * to no gain, i.e. at best we save a few cycles during VCPU init,
+	 * at the cost of additional complexity and overhead while running
+	 * the VCPU.
+	 */
+	u64 bitmap = -1ull;
+
+	/* Nothing to do if hardware doesn't support SGX */
+	if (!cpu_has_vmx_encls_vmexit())
+		return;
+
+#ifdef CONFIG_INTEL_SGX_CORE
+	if (sgx_allowed_in_guest(vcpu) && sgx_enabled_in_guest_bios(vcpu)) {
+		bitmap &= ~GENMASK_ULL(ETRACK, ECREATE);
+
+		if (guest_cpuid_has(vcpu, X86_FEATURE_SGX2))
+			bitmap &= ~GENMASK_ULL(EMODT, EAUG);
+
+		if (!vmcs12 && nested && is_guest_mode(vcpu))
+			vmcs12 = get_vmcs12(vcpu);
+		if (vmcs12 && nested_cpu_has_encls_exit(vmcs12))
+			bitmap |= vmcs12->encls_exiting_bitmap;
+	}
+#endif
+	vmcs_write64(ENCLS_EXITING_BITMAP, bitmap);
+}
+
+static int vmx_cpuid_update_sgx(struct kvm_vcpu *vcpu)
+{
+#ifdef CONFIG_INTEL_SGX_CORE
+	struct vcpu_vmx *vmx = to_vmx(vcpu);
+	struct vmx_epc *epc = to_vmx_epc(vcpu->kvm);
+	struct kvm_cpuid_entry2 *best;
+
+	/*
+	 * Do not allow userspace to expose EPC to a guest without exposing
+	 * SGX.  Functionally it won't cause problems, but it wastes our
+	 * precious EPC and in all likelihood is a simple configuration error.
+	 */
+	if (epc && !sgx_allowed_in_guest(vcpu))
+		return -EINVAL;
+
+	/*
+	 * Unconditionally update the ENCLS bitmap, it's not safe to
+	 * assume that its current state reflects "SGX disabled".
+	 */
+	vmx_write_encls_bitmap(vcpu, NULL);
+
+	vmx->msr_ia32_feature_control_valid_bits &= ~FEATURE_CONTROL_SGX_ENABLE;
+
+	if (!sgx_allowed_in_guest(vcpu))
+		return 0;
+
+	vmx->msr_ia32_feature_control_valid_bits |= FEATURE_CONTROL_SGX_ENABLE;
+
+	/*
+	 * We assume that the SGX1 instruction set is supported if SGX
+	 * is exposed to the guest.
+	 */
+	best = kvm_find_cpuid_entry(vcpu, 0x12, 0);
+	if (!best || !(best->eax & bit(X86_FEATURE_SGX1)))
+		return -EINVAL;
+
+	/*
+	 * SGX without SECS.ATTRIBUTES (CPUID.0x12.0x1) is an invalid
+	 * model.  Even though we effectively ignore what is reported
+	 * to the guest for the allowed SECS.ATTRIBUTES (see below),
+	 * we at least want to guarantee the guest sees a valid model.
+	 * The guest's allowed SECS.ATTRIBUTES are ignored because we
+	 * we don't trap ECREATE, e.g. if supported by the platform,
+	 * the guest can ECREATE a 64-bit enclave regardless of what
+	 * CPUID reports.
+	 */
+	best = kvm_find_cpuid_entry(vcpu, 0x12, 0x1);
+	if (!best)
+		return -EINVAL;
+
+	/*
+	 * The allowed SECS.ATTRIBUTES (CPUID.0x12.0x1) are affected by
+	 * XCR0, which is reflected in vcpu->arch.guest_supported_xcr0.
+	 * The dependency on vcpu->arch.guest_supported_xcr0, which is
+	 * calculated in kvm_update_cpuid, requires kvm_update_cpuid to
+	 * be called prior to kvm_x86_ops->cpuid_update.
+	 */
+	best->eax |= 0x1;
+	best->ecx &= (unsigned int)(vcpu->arch.guest_supported_xcr0 & 0xffffffff);
+	best->ecx |= 0x3;
+	best->edx &= (unsigned int)(vcpu->arch.guest_supported_xcr0 >> 32);
+
+	/*
+	 * Similar to exposing EPC but not SGX, do not allow exposing EPC
+	 * without enumerating it via CPUID.  A guest might be able to run
+	 * without the CPUID information, e.g. via ACPI tables, but it's
+	 * not a valid architectural model and probably wastes our EPC.
+	 */
+	best = kvm_find_cpuid_entry(vcpu, 0x12, 0x2);
+	if (!best)
+		return -EINVAL;
+
+	/*
+	 * Propagate the EPC information to CPUID as a single EPC bank.
+	 * The SGX architecture allows for multiple EPC banks, e.g. for
+	 * NUMA, but enumerating multiple banks serves no purpose since
+	 * there is nothing tying the virtual EPC to specific banks of
+	 * physical EPC, e.g. each virtual EPC page could reside in a
+	 * different physical EPC bank.
+	 */
+	best->eax &= 0xf;
+	if (epc)
+		best->eax |= (uint32_t)(epc->base & 0xfffff000);
+	best->ebx = epc ? (uint32_t)(epc->base >> 32) : 0;
+	best->ecx &= 0xf;
+	if (epc)
+		best->ecx |= (uint32_t)(epc->size & 0xfffff000);
+	best->edx = epc ? (uint32_t)(epc->size >> 32) : 0;
+#endif
+	return 0;
+}
+
 static int vmx_cpuid_update(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
@@ -11156,14 +11367,74 @@ static int vmx_cpuid_update(struct kvm_vcpu *vcpu)
 	if (nested_vmx_allowed(vcpu))
 		nested_vmx_cr_fixed1_bits_update(vcpu);
 
-	return 0;
+	return vmx_cpuid_update_sgx(vcpu);
 }
 
 static int vmx_set_supported_cpuid(u32 func, struct kvm_cpuid_entry2 *entry,
 				   int *nent, int maxnent)
 {
-	if (func == 1 && nested)
-		entry->ecx |= bit(X86_FEATURE_VMX);
+	switch (func) {
+	case 0x1:
+		if (nested)
+			entry->ecx |= bit(X86_FEATURE_VMX);
+		break;
+	case 0x7:
+		if (enable_sgx)
+			entry->ebx |= bit(X86_FEATURE_SGX);
+		break;
+	case 0x12:
+		if (!enable_sgx) {
+			entry->eax = entry->ebx = entry->ecx = entry->edx = 0;
+			break;
+		}
+
+		/*
+		 * Index 0: SGX features and misc information
+		 *
+		 * kvm_do_cpuid_entry has already been called and the common
+		 * CPUID code has cleared feature bits that KVM, or hardware,
+		 * does not support.  Pass-through MISCSELECT and the max
+		 * size fields (EBX and EDX respectively) as we do not trap
+		 * ECREATE, i.e. KVM doesn't enforce additional restrictions.
+		 */
+		entry->flags |= KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
+
+		/*
+		 * Index 1: SECS.ATTRIBUTE
+		 *
+		 * Pass-through the hardware value as is, as we do not trap
+		 * ECREATE, i.e. KVM doesn't enforce additional restrictions.
+		 */
+		if (*nent >= maxnent)
+			return -E2BIG;
+		kvm_do_cpuid_entry(++entry, 0x12, 0x1);
+		entry->flags |= KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
+		++*nent;
+
+		/*
+		 * Index 2: EPC section
+		 *
+		 * Report only a single EPC section to userspace regardless
+		 * of the number of physical EPC sections on the platform.
+		 * Mask the base of the section as userspace doesn't need to
+		 * know the location of the EPC, but keep the size so that
+		 * userspace can make an informed decision regarding the size
+		 * of the virtualized EPC, e.g. to default to a percentage of
+		 * the physical EPC.
+		 */
+		if (*nent >= maxnent)
+			return -E2BIG;
+		kvm_do_cpuid_entry(++entry, 0x12, 0x2);
+		entry->flags |= KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
+		entry->eax &= ~PAGE_MASK;
+		entry->ebx = 0;
+		++*nent;
+
+		break;
+	default:
+		break;
+	}
+
 	return 0;
 }
 
@@ -12008,7 +12279,7 @@ static int prepare_vmcs02(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12,
 			vmcs_write64(APIC_ACCESS_ADDR, -1ull);
 
 		if (exec_control & SECONDARY_EXEC_ENCLS_EXITING)
-			vmcs_write64(ENCLS_EXITING_BITMAP, -1ull);
+			vmx_write_encls_bitmap(vcpu, vmcs12);
 
 		vmcs_write32(SECONDARY_VM_EXEC_CONTROL, exec_control);
 	}

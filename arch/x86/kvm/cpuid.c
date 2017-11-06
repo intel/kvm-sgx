@@ -419,6 +419,11 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 		F(AVX512_4VNNIW) | F(AVX512_4FMAPS) | F(SPEC_CTRL) |
 		F(SPEC_CTRL_SSBD) | F(ARCH_CAPABILITIES);
 
+	/* cpuid 12.0.eax*/
+	const u32 kvm_cpuid_12_0_eax_x86_features =
+		F(SGX1) | 0 /* Reserved */ | F(SGX2) | 0 /* Reserved */ |
+		0 /* Reserved */ | 0 /* ENCLV */ | 0 /* ENCLS_C */;
+
 	/*
 	 * The code below assumes index == 0, which simplifies handling
 	 * leafs with a dynamic number of sub-leafs.  The index passed
@@ -440,7 +445,7 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 
 	switch (function) {
 	case 0:
-		entry->eax = min(entry->eax, (u32)0xd);
+		entry->eax = min(entry->eax, (u32)0x12);
 		break;
 	case 1:
 		entry->edx &= kvm_cpuid_1_edx_x86_features;
@@ -610,6 +615,10 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 		}
 		break;
 	}
+	case 0x12:
+		  /* Intel SGX.  VMX may make additional modifications. */
+		  entry->eax &= kvm_cpuid_12_0_eax_x86_features;
+		  break;
 	case KVM_CPUID_SIGNATURE: {
 		static const char signature[12] = "KVMKVMKVM\0\0";
 		const u32 *sigptr = (const u32 *)signature;
