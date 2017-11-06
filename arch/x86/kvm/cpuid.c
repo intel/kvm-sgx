@@ -276,8 +276,8 @@ static void cpuid_mask(u32 *word, int wordnum)
 	*word &= boot_cpu_data.x86_capability[wordnum];
 }
 
-static void do_cpuid_1_ent(struct kvm_cpuid_entry2 *entry, u32 function,
-			   u32 index)
+void kvm_do_cpuid_entry(struct kvm_cpuid_entry2 *entry, u32 function,
+			u32 index)
 {
 	entry->function = function;
 	entry->index = index;
@@ -285,6 +285,7 @@ static void do_cpuid_1_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 		    &entry->eax, &entry->ebx, &entry->ecx, &entry->edx);
 	entry->flags = 0;
 }
+EXPORT_SYMBOL_GPL(kvm_do_cpuid_entry);
 
 static int __do_cpuid_ent_emulated(struct kvm_cpuid_entry2 *entry,
 				   u32 func, u32 index, int *nent, int maxnent)
@@ -413,7 +414,7 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 	if (*nent >= maxnent)
 		goto out;
 
-	do_cpuid_1_ent(entry, function, index);
+	kvm_do_cpuid_entry(entry, function, index);
 	++*nent;
 
 	switch (function) {
@@ -442,7 +443,7 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 			if (*nent >= maxnent)
 				goto out;
 
-			do_cpuid_1_ent(&entry[t], function, 0);
+			kvm_do_cpuid_entry(&entry[t], function, 0);
 			entry[t].flags |= KVM_CPUID_FLAG_STATEFUL_FUNC;
 			++*nent;
 		}
@@ -461,7 +462,7 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 			cache_type = entry[i - 1].eax & 0x1f;
 			if (!cache_type)
 				break;
-			do_cpuid_1_ent(&entry[i], function, i);
+			kvm_do_cpuid_entry(&entry[i], function, i);
 			entry[i].flags |=
 			       KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
 			++*nent;
@@ -535,7 +536,7 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 			level_type = entry[i - 1].ecx & 0xff00;
 			if (!level_type)
 				break;
-			do_cpuid_1_ent(&entry[i], function, i);
+			kvm_do_cpuid_entry(&entry[i], function, i);
 			entry[i].flags |=
 			       KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
 			++*nent;
@@ -559,7 +560,7 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 			if (*nent >= maxnent)
 				goto out;
 
-			do_cpuid_1_ent(&entry[i], function, idx);
+			kvm_do_cpuid_entry(&entry[i], function, idx);
 			if (idx == 1) {
 				entry[i].eax &= kvm_cpuid_D_1_eax_x86_features;
 				cpuid_mask(&entry[i].eax, CPUID_D_1_EAX);
