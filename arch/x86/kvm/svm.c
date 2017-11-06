@@ -6123,6 +6123,11 @@ static bool svm_pku_supported(void)
 	return false;
 }
 
+static bool svm_sgx_supported(void)
+{
+	return false;
+}
+
 #define PRE_EX(exit)  { .exit_code = (exit), \
 			.stage = X86_ICPT_PRE_EXCEPT, }
 #define POST_EX(exit) { .exit_code = (exit), \
@@ -7490,6 +7495,7 @@ static struct kvm_x86_ops svm_x86_ops __ro_after_init = {
 	.umip_emulated = svm_umip_emulated,
 	.pt_supported = svm_pt_supported,
 	.pku_supported = svm_pku_supported,
+	.sgx_supported = svm_sgx_supported,
 
 	.set_supported_cpuid = svm_set_supported_cpuid,
 
