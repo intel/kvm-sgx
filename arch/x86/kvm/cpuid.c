@@ -704,10 +704,7 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 		break;
 	}
 
-	kvm_x86_ops->set_supported_cpuid(function, entry);
-
-	r = 0;
-
+	r = kvm_x86_ops->set_supported_cpuid(function, entry, nent, maxnent);
 out:
 	put_cpu();
 
