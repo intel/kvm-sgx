@@ -2078,7 +2078,7 @@ static void prepare_vmcs02_early(struct vcpu_vmx *vmx, struct vmcs12 *vmcs12)
 			vmcs_write64(APIC_ACCESS_ADDR, -1ull);
 
 		if (exec_control & SECONDARY_EXEC_ENCLS_EXITING)
-			vmcs_write64(ENCLS_EXITING_BITMAP, -1ull);
+			vmx_write_encls_bitmap(&vmx->vcpu, vmcs12);
 
 		vmcs_write32(SECONDARY_VM_EXEC_CONTROL, exec_control);
 	}
@@ -4988,6 +4988,20 @@ static bool nested_vmx_exit_handled_cr(struct kvm_vcpu *vcpu,
 	return false;
 }
 
+static bool nested_vmx_exit_handled_encls(struct kvm_vcpu *vcpu,
+					  struct vmcs12 *vmcs12)
+{
+	u32 encls_leaf;
+
+	if (!nested_cpu_has2(vmcs12, SECONDARY_EXEC_ENCLS_EXITING))
+		return false;
+
+	encls_leaf = vcpu->arch.regs[VCPU_REGS_RAX];
+	if (encls_leaf > 62)
+		encls_leaf = 63;
+	return (vmcs12->encls_exiting_bitmap & (1ULL << encls_leaf));
+}
+
 static bool nested_vmx_exit_handled_vmcs_access(struct kvm_vcpu *vcpu,
 	struct vmcs12 *vmcs12, gpa_t bitmap)
 {
@@ -5186,8 +5200,7 @@ bool nested_vmx_exit_reflected(struct kvm_vcpu *vcpu, u32 exit_reason)
 		/* VM functions are emulated through L2->L0 vmexits. */
 		return false;
 	case EXIT_REASON_ENCLS:
-		/* SGX is never exposed to L1 */
-		return false;
+		return nested_vmx_exit_handled_encls(vcpu, vmcs12);
 	default:
 		return true;
 	}
