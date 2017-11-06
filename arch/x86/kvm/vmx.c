@@ -1018,6 +1018,11 @@ struct vcpu_vmx {
 	 */
 	u64 msr_ia32_feature_control;
 	u64 msr_ia32_feature_control_valid_bits;
+
+#ifdef CONFIG_INTEL_SGX_CORE
+	/* SGX Launch Control public key hash */
+	u64 msr_ia32_sgxlepubkeyhash[4];
+#endif
 };
 
 enum segment_cache_field {
@@ -1573,6 +1578,32 @@ static void vmx_epc_destroy(struct kvm *kvm)
 	kvm_vmx->epc = NULL;
 
 	kfree(epc);
+}
+
+static void vmx_init_sgxlepubkeyhash(struct vcpu_vmx *vmx)
+{
+	u64 *hash = vmx->msr_ia32_sgxlepubkeyhash;
+
+	/*
+	 * Use Intel's default hardware value if Launch Control is not
+	 * supported, i.e. Intel's hash is hardcoded into silicon, or
+	 * if Launch Control is supported and enabled, i.e. mimic the
+	 * reset value and let the guest write the MSRs at will.  If
+	 * Launch Control is supported but disabled, then we have to
+	 * use the current MSR values as the MSRs are not writable.
+	 */
+	if (sgx_lc_enabled || !boot_cpu_has(X86_FEATURE_SGX_LC)) {
+		hash[0] = 0xa6053e051270b7acULL;
+		hash[1] = 0x6cfbe8ba8b3b413dULL;
+		hash[2] = 0xc4916d99f2b3735dULL;
+		hash[3] = 0xd4f8c05909f9bb3bULL;
+	}
+	else {
+		rdmsrl(MSR_IA32_SGXLEPUBKEYHASH0, hash[0]);
+		rdmsrl(MSR_IA32_SGXLEPUBKEYHASH1, hash[1]);
+		rdmsrl(MSR_IA32_SGXLEPUBKEYHASH2, hash[2]);
+		rdmsrl(MSR_IA32_SGXLEPUBKEYHASH3, hash[3]);
+	}
 }
 
 #endif /* CONFIG_INTEL_SGX_CORE */
@@ -3627,6 +3658,12 @@ static inline bool sgx_enabled_in_guest_bios(struct kvm_vcpu *vcpu)
 	return (to_vmx(vcpu)->msr_ia32_feature_control & bits) == bits;
 }
 
+static inline bool sgx_lc_enabled_in_guest_bios(struct kvm_vcpu *vcpu)
+{
+	const u64 bits = FEATURE_CONTROL_LOCKED | FEATURE_CONTROL_SGX_LE_WR;
+	return (to_vmx(vcpu)->msr_ia32_feature_control & bits) == bits;
+}
+
 /*
  * nested_vmx_setup_ctls_msrs() sets up variables containing the values to be
  * returned for the various VMX controls MSRs when nested VMX is enabled.
@@ -4280,6 +4317,16 @@ static int vmx_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_IA32_FEATURE_CONTROL:
 		msr_info->data = vmx->msr_ia32_feature_control;
 		break;
+	case MSR_IA32_SGXLEPUBKEYHASH0 ... MSR_IA32_SGXLEPUBKEYHASH3:
+#ifndef CONFIG_INTEL_SGX_CORE
+		return 1;
+#else
+		if (!guest_cpuid_has(vcpu, X86_FEATURE_SGX_LC))
+			return 1;
+		msr_info->data = to_vmx(vcpu)->msr_ia32_sgxlepubkeyhash
+			[msr_info->index - MSR_IA32_SGXLEPUBKEYHASH0];
+		break;
+#endif
 	case MSR_IA32_VMX_BASIC ... MSR_IA32_VMX_VMFUNC:
 		if (!nested_vmx_allowed(vcpu))
 			return 1;
@@ -4456,6 +4503,22 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		/* SGX may be enabled/disabled by guest's firmware */
 		vmx_write_encls_bitmap(vcpu, NULL);
 		break;
+	case MSR_IA32_SGXLEPUBKEYHASH0 ... MSR_IA32_SGXLEPUBKEYHASH3:
+#ifndef CONFIG_INTEL_SGX_CORE
+		return 1;
+#else
+		if (!sgx_lc_enabled ||
+		    !guest_cpuid_has(vcpu, X86_FEATURE_SGX_LC))
+			return 1;
+		if (!msr_info->host_initiated &&
+		    (vmx->msr_ia32_feature_control & FEATURE_CONTROL_LOCKED) &&
+		    !(vmx->msr_ia32_feature_control &
+		      FEATURE_CONTROL_SGX_LE_WR))
+			return 1;
+		vmx->msr_ia32_sgxlepubkeyhash
+			[msr_index - MSR_IA32_SGXLEPUBKEYHASH0] = data;
+		break;
+#endif
 	case MSR_IA32_VMX_BASIC ... MSR_IA32_VMX_VMFUNC:
 		if (!msr_info->host_initiated)
 			return 1; /* they are read-only */
@@ -9311,6 +9374,217 @@ fail:
 	return 1;
 }
 
+#ifdef CONFIG_INTEL_SGX_CORE
+
+struct encls_mem_op {
+	const enum kvm_reg reg;
+	gva_t gva;
+	gpa_t gpa;
+	unsigned long size;
+	unsigned long align;
+	void *p;
+	bool write;
+};
+
+static inline void vmx_inject_epc_page_fault(struct kvm_vcpu *vcpu,
+					     struct x86_exception *ex,
+					     const struct encls_mem_op *op)
+{
+	struct x86_exception tmp;
+
+	if (!ex) {
+		ex = &tmp;
+		ex->vector = PF_VECTOR;
+		ex->error_code = PFERR_PRESENT_MASK;
+		if (op->write)
+			ex->error_code |= PFERR_WRITE_MASK;
+		ex->address = op->gva;
+		ex->error_code_valid = true;
+		ex->nested_page_fault = false;
+	}
+	ex->error_code |= PFERR_SGX_MASK;
+
+	kvm_propagate_page_fault(vcpu, ex);
+}
+
+/*
+ * ENCLS's memory operands use a fixed segment (DS) and a fixed
+ * address size based on the mode.  Related prefixes are ignored.
+ */
+static bool get_encls_mem_op(struct kvm_vcpu *vcpu, struct encls_mem_op *op)
+{
+	struct kvm_segment s;
+	bool fault;
+
+	vmx_get_segment(vcpu, &s, VCPU_SREG_DS);
+
+	op->gva = s.base + kvm_register_read(vcpu, op->reg);
+
+	if (!IS_ALIGNED(op->gva, op->align)) {
+		fault = true;
+	} else if (is_long_mode(vcpu)) {
+		fault = is_noncanonical_address(op->gva, vcpu);
+	} else {
+		op->gva &= 0xffffffff;
+		fault = (s.unusable) ||
+			(s.type != 2 && s.type != 3) ||
+			(op->gva > s.limit) ||
+			((s.base != 0 || s.limit != 0xffffffff) &&
+			((op->gva + op->size) > (s.limit + 1)));
+	}
+	if (fault)
+		kvm_inject_gp(vcpu, 0);
+	return fault;
+}
+
+static bool get_encls_epc_gpa(struct kvm_vcpu *vcpu, struct encls_mem_op *op)
+{
+	struct vmx_epc *epc = to_vmx_epc(vcpu->kvm);
+	struct x86_exception ex;
+
+	op->gpa = kvm_mmu_gva_to_gpa_write(vcpu, op->gva, &ex);
+	if (op->gpa == UNMAPPED_GVA) {
+		vmx_inject_epc_page_fault(vcpu, &ex, op);
+		return true;
+	} else if (op->gpa < epc->base || op->gpa >= (epc->base + epc->size)) {
+		vmx_inject_epc_page_fault(vcpu, NULL, op);
+		return true;
+	}
+	return false;
+}
+
+static bool get_encls_epc_page(struct kvm_vcpu *vcpu, struct encls_mem_op *op,
+			       int *ret)
+{
+	struct vmx_epc *epc = to_vmx_epc(vcpu->kvm);
+	struct vmx_epc_page *page;
+	gfn_t gfn = PFN_DOWN(op->gpa);
+
+	page = radix_tree_lookup(&epc->page_tree, gfn);
+	if (unlikely(!page || !page->epc_page)) {
+		up_read(&epc->lock);
+
+		if (is_error_noslot_pfn(gfn_to_pfn(vcpu->kvm, gfn))) {
+			*ret = -ENOMEM;
+			return true;
+		}
+
+		down_read(&epc->lock);
+		page = radix_tree_lookup(&epc->page_tree, gfn);
+		if (WARN_ON(!page || !page->epc_page)) {
+			up_read(&epc->lock);
+			*ret = -EFAULT;
+			return true;
+		}
+	}
+	op->p = page->epc_page;
+	return false;
+}
+
+static bool get_encls_mem_value(struct kvm_vcpu *vcpu,
+				const struct encls_mem_op *op)
+{
+	struct x86_exception ex;
+
+	if (kvm_read_guest_virt(vcpu, op->gva, op->p, op->size, &ex)) {
+		kvm_propagate_page_fault(vcpu, &ex);
+		return true;
+	}
+	return false;
+}
+
+static inline int vmx_encls_postamble(struct kvm_vcpu *vcpu, int ret,
+				      const struct encls_mem_op *op)
+{
+	unsigned long rflags;
+
+	if (IS_ENCLS_FAULT(ret)) {
+		if (ENCLS_FAULT_VECTOR(ret) == PF_VECTOR)
+			vmx_inject_epc_page_fault(vcpu, NULL, op);
+		else
+			kvm_inject_gp(vcpu, 0);
+		return 1;
+	}
+
+	rflags = vmx_get_rflags(vcpu) & ~(X86_EFLAGS_CF | X86_EFLAGS_PF |
+					  X86_EFLAGS_AF | X86_EFLAGS_SF |
+					  X86_EFLAGS_OF);
+	if (ret)
+		rflags |= X86_EFLAGS_ZF;
+	else
+		rflags &= ~X86_EFLAGS_ZF;
+	vmx_set_rflags(vcpu, rflags);
+
+	kvm_register_write(vcpu, VCPU_REGS_RAX, ret);
+	return kvm_skip_emulated_instruction(vcpu);
+}
+
+static int handle_encls_einit(struct kvm_vcpu *vcpu)
+{
+	struct vmx_epc *epc = to_vmx_epc(vcpu->kvm);
+	struct vcpu_vmx *vmx = to_vmx(vcpu);
+	struct page *sig_token_page;
+	int r, ret;
+
+	struct encls_mem_op sig = {
+		.reg = VCPU_REGS_RBX,
+		.size = 1808,
+		.align = 4096,
+	};
+	struct encls_mem_op secs = {
+		.reg = VCPU_REGS_RCX,
+		.size = 4096,
+		.align = 4096,
+		.write = true,
+	};
+	struct encls_mem_op token = {
+		.reg = VCPU_REGS_RDX,
+		.size = 304,
+		.align = 512,
+	};
+
+	if (get_encls_mem_op(vcpu, &sig) ||
+	    get_encls_mem_op(vcpu, &secs) ||
+	    get_encls_mem_op(vcpu, &token))
+		return 1;
+
+	if (get_encls_epc_gpa(vcpu, &secs))
+		return 1;
+
+	/*
+	 * Even though we don't need the full 4k, allocate an entire page
+	 * for the sig and token so that we can satisfy EINIT's alignment
+	 * requirements with minimal arithmetic.
+	 */
+	sig_token_page = alloc_page(GFP_HIGHUSER);
+	if (!sig_token_page)
+		return -ENOMEM;
+
+	sig.p = kmap(sig_token_page);
+	token.p = (void *)ALIGN((unsigned long)sig.p + sig.size, token.align);
+
+	if (get_encls_mem_value(vcpu, &sig) ||
+	    get_encls_mem_value(vcpu, &token)) {
+		ret = 1;
+		goto out;
+	}
+
+	down_read(&epc->lock);
+	if (get_encls_epc_page(vcpu, &secs, &ret))
+		goto out;
+
+	r = sgx_einit(sig.p, token.p, secs.p, vmx->msr_ia32_sgxlepubkeyhash);
+	up_read(&epc->lock);
+
+	ret = vmx_encls_postamble(vcpu, r, &secs);
+out:
+	kunmap(sig_token_page);
+	__free_page(sig_token_page);
+	return ret;
+}
+
+#endif /* CONFIG_INTEL_SGX_CORE */
+
 static inline bool encls_leaf_enabled_in_guest(struct kvm_vcpu *vcpu, u32 leaf)
 {
 	if (!enable_sgx)
@@ -9334,6 +9608,10 @@ static int handle_encls(struct kvm_vcpu *vcpu)
 	else if (!sgx_enabled_in_guest_bios(vcpu))
 		kvm_inject_gp(vcpu, 0);
 	else {
+#ifdef CONFIG_INTEL_SGX_CORE
+		if (leaf == EINIT)
+			return handle_encls_einit(vcpu);
+#endif
 		WARN(1, "KVM: unexpected exit on ENCLS[%u]", leaf);
 		vcpu->run->exit_reason = KVM_EXIT_UNKNOWN;
 		vcpu->run->hw.hardware_exit_reason = EXIT_REASON_ENCLS;
@@ -11017,6 +11295,11 @@ static struct kvm_vcpu *vmx_create_vcpu(struct kvm *kvm, unsigned int id)
 		nested_vmx_setup_ctls_msrs(&vmx->nested.msrs,
 					   kvm_vcpu_apicv_active(&vmx->vcpu));
 
+#ifdef CONFIG_INTEL_SGX_CORE
+	if (enable_sgx)
+		vmx_init_sgxlepubkeyhash(vmx);
+#endif
+
 	vmx->nested.posted_intr_nv = -1;
 	vmx->nested.current_vmptr = -1ull;
 
@@ -11247,6 +11530,17 @@ static void vmx_write_encls_bitmap(struct kvm_vcpu *vcpu,
 		if (guest_cpuid_has(vcpu, X86_FEATURE_SGX2))
 			bitmap &= ~GENMASK_ULL(EMODT, EAUG);
 
+		/*
+		 * If launch control is enabled in the host, EINIT must be
+		 * trapped and executed by the host to avoid races between
+		 * the host and guest regarding the launch control MSRs,
+		 * which are not loaded/saved on VMEntry/VMexit (they aren't
+		 * allowed in the hardware-supported lists and writing the
+		 * MSRs is extraordinarily expensive).
+		 */
+		if (sgx_lc_enabled)
+			bitmap |= (1 << EINIT);
+
 		if (!vmcs12 && nested && is_guest_mode(vcpu))
 			vmcs12 = get_vmcs12(vcpu);
 		if (vmcs12 && nested_cpu_has_encls_exit(vmcs12))
@@ -11277,12 +11571,16 @@ static int vmx_cpuid_update_sgx(struct kvm_vcpu *vcpu)
 	 */
 	vmx_write_encls_bitmap(vcpu, NULL);
 
-	vmx->msr_ia32_feature_control_valid_bits &= ~FEATURE_CONTROL_SGX_ENABLE;
+	vmx->msr_ia32_feature_control_valid_bits &=
+		~(FEATURE_CONTROL_SGX_ENABLE | FEATURE_CONTROL_SGX_LE_WR);
 
 	if (!sgx_allowed_in_guest(vcpu))
 		return 0;
 
 	vmx->msr_ia32_feature_control_valid_bits |= FEATURE_CONTROL_SGX_ENABLE;
+	if (sgx_lc_enabled && guest_cpuid_has(vcpu, X86_FEATURE_SGX_LC))
+		vmx->msr_ia32_feature_control_valid_bits |=
+			FEATURE_CONTROL_SGX_LE_WR;
 
 	/*
 	 * We assume that the SGX1 instruction set is supported if SGX
@@ -11381,6 +11679,8 @@ static int vmx_set_supported_cpuid(u32 func, struct kvm_cpuid_entry2 *entry,
 	case 0x7:
 		if (enable_sgx)
 			entry->ebx |= bit(X86_FEATURE_SGX);
+		if (enable_sgx && sgx_lc_enabled)
+			entry->ecx |= bit(X86_FEATURE_SGX_LC);
 		break;
 	case 0x12:
 		if (!enable_sgx) {
