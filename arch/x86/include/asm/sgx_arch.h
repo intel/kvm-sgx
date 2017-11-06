@@ -57,6 +57,8 @@
 #ifndef _ASM_X86_SGX_ARCH_H
 #define _ASM_X86_SGX_ARCH_H
 
+#include <linux/types.h>
+
 #define SGX_SSA_GPRS_SIZE		182
 #define SGX_SSA_MISC_EXINFO_SIZE	16
 
