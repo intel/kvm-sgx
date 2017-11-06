@@ -662,6 +662,11 @@ struct vcpu_vmx {
 	 */
 	u64 msr_ia32_feature_control;
 	u64 msr_ia32_feature_control_valid_bits;
+
+#ifdef CONFIG_INTEL_SGX_CORE
+	/* SGX Launch Control public key hash */
+	u64 msr_ia32_sgxlepubkeyhash[4];
+#endif
 };
 
 enum segment_cache_field {
@@ -1225,6 +1230,37 @@ static void vmx_destroy_sgx_epc(struct kvm *kvm)
 	kvm->arch.priv = NULL;
 
 	kfree(epc);
+}
+
+#define SGX_INTEL_DEFAULT_LEPUBKEYHASH0	0xa6053e051270b7acULL
+#define SGX_INTEL_DEFAULT_LEPUBKEYHASH1	0x6cfbe8ba8b3b413dULL
+#define SGX_INTEL_DEFAULT_LEPUBKEYHASH2	0xc4916d99f2b3735dULL
+#define SGX_INTEL_DEFAULT_LEPUBKEYHASH3	0xd4f8c05909f9bb3bULL
+
+static void vmx_sgx_init_lepubkeyhash(struct vcpu_vmx *vmx)
+{
+	u64 *hash = vmx->msr_ia32_sgxlepubkeyhash;
+
+	/*
+	 * Use Intel's default hardware value if Launch Control is not
+	 * supported, i.e. Intel's hash is hardcoded into silicon, or
+	 * if Launch Control is supported and enabled, i.e. mimic the
+	 * reset value and let the guest write the MSRs at will.  If
+	 * Launch Control is supported but disabled, then we have to
+	 * use the current MSR values as the MSRs are not writable.
+	 */
+	if (sgx_lc_enabled || !boot_cpu_has(X86_FEATURE_SGX_LC)) {
+		hash[0] = SGX_INTEL_DEFAULT_LEPUBKEYHASH0;
+		hash[1] = SGX_INTEL_DEFAULT_LEPUBKEYHASH1;
+		hash[2] = SGX_INTEL_DEFAULT_LEPUBKEYHASH2;
+		hash[3] = SGX_INTEL_DEFAULT_LEPUBKEYHASH3;
+	}
+	else {
+		rdmsrl(MSR_IA32_SGXLEPUBKEYHASH0, hash[0]);
+		rdmsrl(MSR_IA32_SGXLEPUBKEYHASH1, hash[1]);
+		rdmsrl(MSR_IA32_SGXLEPUBKEYHASH2, hash[2]);
+		rdmsrl(MSR_IA32_SGXLEPUBKEYHASH3, hash[3]);
+	}
 }
 
 #endif /* CONFIG_INTEL_SGX_CORE */
@@ -2929,6 +2965,13 @@ static inline bool sgx_enabled_in_guest_bios(struct kvm_vcpu *vcpu)
 	return (to_vmx(vcpu)->msr_ia32_feature_control & bits) == bits;
 }
 
+static inline bool sgx_lc_enabled_in_guest_bios(struct kvm_vcpu *vcpu)
+{
+	const u64 bits = FEATURE_CONTROL_LOCKED |
+			 FEATURE_CONTROL_SGX_LAUNCH_CONTROL_ENABLE;
+	return (to_vmx(vcpu)->msr_ia32_feature_control & bits) == bits;
+}
+
 /*
  * nested_vmx_setup_ctls_msrs() sets up variables containing the values to be
  * returned for the various VMX controls MSRs when nested VMX is enabled.
@@ -3541,6 +3584,16 @@ static int vmx_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_IA32_FEATURE_CONTROL:
 		msr_info->data = to_vmx(vcpu)->msr_ia32_feature_control;
 		break;
+	case MSR_IA32_SGXLEPUBKEYHASH0 ... MSR_IA32_SGXLEPUBKEYHASH3:
+#ifndef CONFIG_INTEL_SGX_CORE
+		return 1;
+#else
+		if (!guest_cpuid_has(vcpu, X86_FEATURE_SGX_LC))
+			return 1;
+		msr_info->data = to_vmx(vcpu)->msr_ia32_sgxlepubkeyhash
+			[msr_info->index - MSR_IA32_SGXLEPUBKEYHASH0];
+		break;
+#endif
 	case MSR_IA32_VMX_BASIC ... MSR_IA32_VMX_VMFUNC:
 		if (!nested_vmx_allowed(vcpu))
 			return 1;
@@ -3657,6 +3710,22 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		/* SGX may be enabled/disabled by guest's firmware */
 		vmx_write_encls_bitmap(vcpu, NULL);
 		break;
+	case MSR_IA32_SGXLEPUBKEYHASH0 ... MSR_IA32_SGXLEPUBKEYHASH3:
+#ifndef CONFIG_INTEL_SGX_CORE
+		return 1;
+#else
+		if (!sgx_lc_enabled ||
+		    !guest_cpuid_has(vcpu, X86_FEATURE_SGX_LC))
+			return 1;
+		if (!msr_info->host_initiated &&
+		    (vmx->msr_ia32_feature_control & FEATURE_CONTROL_LOCKED) &&
+		    !(vmx->msr_ia32_feature_control &
+		      FEATURE_CONTROL_SGX_LAUNCH_CONTROL_ENABLE))
+			return 1;
+		vmx->msr_ia32_sgxlepubkeyhash
+			[msr_index - MSR_IA32_SGXLEPUBKEYHASH0] = data;
+		break;
+#endif
 	case MSR_IA32_VMX_BASIC ... MSR_IA32_VMX_VMFUNC:
 		if (!msr_info->host_initiated)
 			return 1; /* they are read-only */
@@ -9898,6 +9967,11 @@ static struct kvm_vcpu *vmx_create_vcpu(struct kvm *kvm, unsigned int id)
 		vmx->nested.vpid02 = allocate_vpid();
 	}
 
+#ifdef CONFIG_INTEL_SGX_CORE
+	if (enable_sgx)
+		vmx_sgx_init_lepubkeyhash(vmx);
+#endif
+
 	vmx->nested.posted_intr_nv = -1;
 	vmx->nested.current_vmptr = -1ull;
 
@@ -10120,7 +10194,8 @@ static int vmx_cpuid_update_sgx(struct kvm_vcpu *vcpu)
 			return -EINVAL;
 
 		vmx->msr_ia32_feature_control_valid_bits &=
-			~FEATURE_CONTROL_SGX_ENABLE;
+			~(FEATURE_CONTROL_SGX_ENABLE |
+			  FEATURE_CONTROL_SGX_LAUNCH_CONTROL_ENABLE);
 		if (nested_vmx_allowed(vcpu))
 			vmx->nested.nested_vmx_secondary_ctls_high &=
 				~SECONDARY_EXEC_ENCLS_EXITING;
@@ -10136,6 +10211,9 @@ static int vmx_cpuid_update_sgx(struct kvm_vcpu *vcpu)
 	if (nested_vmx_allowed(vcpu))
 		vmx->nested.nested_vmx_secondary_ctls_high |=
 			SECONDARY_EXEC_ENCLS_EXITING;
+	if (sgx_lc_enabled && guest_cpuid_has(vcpu, X86_FEATURE_SGX_LC))
+		vmx->msr_ia32_feature_control_valid_bits |=
+			FEATURE_CONTROL_SGX_LAUNCH_CONTROL_ENABLE;
 
 	/*
 	 * We assume that the SGX1 instruction set is supported if SGX
@@ -10219,6 +10297,8 @@ static int vmx_set_supported_cpuid(u32 func, struct kvm_cpuid_entry2 *entry,
 	case 0x7:
 		if (enable_sgx)
 			entry->ebx |= bit(X86_FEATURE_SGX);
+		if (enable_sgx && sgx_lc_enabled)
+			entry->ecx |= bit(X86_FEATURE_SGX_LC);
 		break;
 	case 0x12:
 		if (!enable_sgx) {
