@@ -10830,10 +10830,12 @@ static void vmx_cpuid_update(struct kvm_vcpu *vcpu)
 		nested_vmx_cr_fixed1_bits_update(vcpu);
 }
 
-static void vmx_set_supported_cpuid(u32 func, struct kvm_cpuid_entry2 *entry)
+static int vmx_set_supported_cpuid(u32 func, struct kvm_cpuid_entry2 *entry,
+				   int *nent, int maxnent)
 {
 	if (func == 1 && nested)
 		entry->ecx |= bit(X86_FEATURE_VMX);
+	return 0;
 }
 
 static void nested_ept_inject_page_fault(struct kvm_vcpu *vcpu,
