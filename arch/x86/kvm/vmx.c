@@ -8550,6 +8550,157 @@ fail:
 	return 1;
 }
 
+#ifdef CONFIG_INTEL_SGX_CORE
+
+struct einit_mem_op {
+	const enum kvm_reg reg;
+	gva_t gva;
+	unsigned long size;
+	unsigned long align;
+	void *p;
+};
+
+/*
+ * EINIT's memory operands use a fixed segment (DS) and a fixed
+ * address size based on the mode.  Related prefixes are ignored.
+ */
+static bool get_einit_mem_op(struct kvm_vcpu *vcpu, struct einit_mem_op *op)
+{
+	struct kvm_segment s;
+
+	vmx_get_segment(vcpu, &s, VCPU_SREG_DS);
+
+	op->gva = s.base + kvm_register_read(vcpu, op->reg);
+
+	if (!IS_ALIGNED(op->gva, op->align))
+		return true;
+
+	if (is_long_mode(vcpu))
+		return is_noncanonical_address(op->gva, vcpu);
+
+	op->gva &= 0xffffffff;
+	return 	(s.unusable) ||
+		(s.type != 2 && s.type != 3) ||
+		(op->gva > s.limit) ||
+		((s.base != 0 || s.limit != 0xffffffff) &&
+		((op->gva + op->size) > (s.limit + 1)));
+}
+
+static int handle_encls_einit(struct kvm_vcpu *vcpu)
+{
+	int ret;
+	gpa_t secs_gpa;
+	kvm_pfn_t secs_pfn;
+	unsigned long rflags;
+	struct x86_exception ex = { .vector = 0 };
+
+	struct page *sig_token_page = NULL;
+	struct vcpu_vmx *vmx = to_vmx(vcpu);
+	struct kvm_sgx_epc *epc = to_sgx_epc(vcpu->kvm);
+	struct x86_emulate_ctxt *ctxt = &vcpu->arch.emulate_ctxt;
+
+	struct einit_mem_op sig = {
+		.reg = VCPU_REGS_RBX,
+		.size = 1808,
+		.align = 4096,
+	};
+	struct einit_mem_op secs = {
+		.reg = VCPU_REGS_RCX,
+		.size = 4096,
+		.align = 4096,
+	};
+	struct einit_mem_op token = {
+		.reg = VCPU_REGS_RDX,
+		.size = 304,
+		.align = 512,
+	};
+
+	if (get_einit_mem_op(vcpu, &sig) ||
+	    get_einit_mem_op(vcpu, &secs) ||
+	    get_einit_mem_op(vcpu, &token)) {
+		kvm_inject_gp(vcpu, 0);
+		return 1;
+	}
+
+	secs_gpa = kvm_mmu_gva_to_gpa_write(vcpu, secs.gva, &ex);
+	if (secs_gpa == UNMAPPED_GVA)
+		goto page_fault;
+	if (secs_gpa < epc->base || secs_gpa >= (epc->base + epc->size))
+		goto page_fault;
+
+	/*
+	 * Because the SECS resides in reserved memory, it must be manually
+	 * mapped, e.g. via ioreamp.  SGX core handles the mapping, we just
+	 * need to get the physical address and retrieve the virtual address
+	 * via __sgx_get_page.
+	 */
+	secs_pfn = gfn_to_pfn(vcpu->kvm, PFN_DOWN(secs_gpa));
+	if (is_error_pfn(secs_pfn))
+		goto page_fault;
+	secs.p = __sgx_get_page(secs_pfn << PAGE_SHIFT);
+	if (!secs.p)
+		goto page_fault;
+
+	/*
+	 * Even though we don't need the full 4k, allocate an entire page
+	 * for the sig and token so that we can satisfy EINIT's alignment
+	 * requirements with minimal arithmetic.
+	 */
+	sig_token_page = alloc_page(GFP_HIGHUSER);
+	if (!sig_token_page)
+		return -ENOMEM;
+
+	sig.p = kmap(sig_token_page);
+	token.p = (void *)ALIGN((unsigned long)sig.p + sig.size, token.align);
+
+	if (kvm_read_guest_virt(ctxt, sig.gva, sig.p, sig.size, &ex))
+		goto page_fault;
+
+	if (kvm_read_guest_virt(ctxt, token.gva, token.p, token.size, &ex))
+		goto page_fault;
+
+	ret = sgx_einit(sig.p, token.p, secs.p, vmx->msr_ia32_sgxlepubkeyhash);
+	if (IS_ENCLS_FAULT(ret)) {
+		if (ENCLS_FAULT_VECTOR(ret) == PF_VECTOR)
+			goto page_fault;
+		kvm_inject_gp(vcpu, 0);
+		goto out;
+	}
+
+	rflags = vmx_get_rflags(vcpu) & ~(X86_EFLAGS_CF | X86_EFLAGS_PF |
+					  X86_EFLAGS_AF | X86_EFLAGS_SF |
+					  X86_EFLAGS_OF);
+	if (ret)
+		rflags |= X86_EFLAGS_ZF;
+	else
+		rflags &= ~X86_EFLAGS_ZF;
+	vmx_set_rflags(vcpu, rflags);
+
+	kvm_register_write(vcpu, VCPU_REGS_RAX, ret);
+	kvm_skip_emulated_instruction(vcpu);
+	goto out;
+
+page_fault:
+	if (!ex.vector) {
+		ex.vector = PF_VECTOR;
+		ex.error_code = (PFERR_PRESENT_MASK |
+				 PFERR_WRITE_MASK |
+				 PFERR_SGX_MASK);
+		ex.address = secs.gva;
+		ex.error_code_valid = true;
+		ex.nested_page_fault = false;
+	}
+	kvm_inject_page_fault(vcpu, &ex);
+
+out:
+	if (sig_token_page)
+		kunmap(sig_token_page);
+	if (secs.p)
+		sgx_put_page(secs.p);
+	return 1;
+}
+#endif /* CONFIG_INTEL_SGX_CORE */
+
 static int handle_encls(struct kvm_vcpu *vcpu)
 {
 	/*
@@ -8562,12 +8713,24 @@ static int handle_encls(struct kvm_vcpu *vcpu)
 		kvm_queue_exception(vcpu, UD_VECTOR);
 	else if (!sgx_enabled_in_guest_bios(vcpu))
 		kvm_inject_gp(vcpu, 0);
-	else
+	else {
+#ifdef CONFIG_INTEL_SGX_CORE
 		/*
-		 * We don't currently trap on any leafs when SGX is fully enabled
-		 * in the guest, we should never reach this point.
+		 * EINIT is the only leaf we trap on when SGX is fully enabled
+		 * in the guest, we should never reach this point with a leaf
+		 * other than EINIT.
+		 */
+		BUG_ON((u32)vcpu->arch.regs[VCPU_REGS_RAX] != EINIT);
+
+		return handle_encls_einit(vcpu);
+#else
+		/*
+		 * SGX is disabled in the host, so it should be impossible for
+		 * SGX to be enabled in the guest.
 		 */
 		BUG();
+#endif
+	}
 	return 1;
 }
 
@@ -10337,7 +10500,16 @@ static void vmx_write_encls_bitmap(struct kvm_vcpu *vcpu,
 
 #ifdef CONFIG_INTEL_SGX_CORE
 	if (sgx_allowed_in_guest(vcpu) && sgx_enabled_in_guest_bios(vcpu)) {
-		encls_bitmap = 0;
+		/*
+		 * If launch control is enabled in the host, EINIT must be
+		 * trapped and executed by the host to avoid races between
+		 * the host and guest regarding the launch control MSRs,
+		 * which are not loaded/saved on VMEntry/VMexit (they aren't
+		 * allowed in the hardware-supported lists and writing the
+		 * MSRs is extraordinarily expensive).
+		 */
+		encls_bitmap = sgx_lc_enabled ? (1 << EINIT) : 0;
+
 		if (!vmcs12 && nested && is_guest_mode(vcpu))
 			vmcs12 = get_vmcs12(vcpu);
 		if (vmcs12 && nested_cpu_has_encls_exit(vmcs12))
