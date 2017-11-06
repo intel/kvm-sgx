@@ -932,7 +932,7 @@ struct kvm_x86_ops {
 	void (*hardware_unsetup)(void);            /* __exit */
 	bool (*cpu_has_accelerated_tpr)(void);
 	bool (*has_emulated_msr)(int index);
-	void (*cpuid_update)(struct kvm_vcpu *vcpu);
+	int (*cpuid_update)(struct kvm_vcpu *vcpu);
 
 	struct kvm *(*vm_alloc)(void);
 	void (*vm_free)(struct kvm *);

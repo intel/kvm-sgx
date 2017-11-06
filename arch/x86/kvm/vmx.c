@@ -10810,7 +10810,7 @@ static void nested_vmx_cr_fixed1_bits_update(struct kvm_vcpu *vcpu)
 #undef cr4_fixed1_update
 }
 
-static void vmx_cpuid_update(struct kvm_vcpu *vcpu)
+static int vmx_cpuid_update(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 
@@ -10828,6 +10828,8 @@ static void vmx_cpuid_update(struct kvm_vcpu *vcpu)
 
 	if (nested_vmx_allowed(vcpu))
 		nested_vmx_cr_fixed1_bits_update(vcpu);
+
+	return 0;
 }
 
 static int vmx_set_supported_cpuid(u32 func, struct kvm_cpuid_entry2 *entry,

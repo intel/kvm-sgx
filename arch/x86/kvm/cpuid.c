@@ -228,8 +228,10 @@ int kvm_vcpu_ioctl_set_cpuid(struct kvm_vcpu *vcpu,
 	vcpu->arch.cpuid_nent = cpuid->nent;
 	cpuid_fix_nx_cap(vcpu);
 	kvm_apic_set_version(vcpu);
-	kvm_x86_ops->cpuid_update(vcpu);
 	r = kvm_update_cpuid(vcpu);
+	if (r)
+		goto out;
+	r = kvm_x86_ops->cpuid_update(vcpu);
 
 out:
 	vfree(cpuid_entries);
@@ -251,8 +253,11 @@ int kvm_vcpu_ioctl_set_cpuid2(struct kvm_vcpu *vcpu,
 		goto out;
 	vcpu->arch.cpuid_nent = cpuid->nent;
 	kvm_apic_set_version(vcpu);
-	kvm_x86_ops->cpuid_update(vcpu);
 	r = kvm_update_cpuid(vcpu);
+	if (r)
+		goto out;
+	r = kvm_x86_ops->cpuid_update(vcpu);
+
 out:
 	return r;
 }

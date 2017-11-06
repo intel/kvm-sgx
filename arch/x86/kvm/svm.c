@@ -5825,17 +5825,17 @@ static u64 svm_get_mt_mask(struct kvm_vcpu *vcpu, gfn_t gfn, bool is_mmio)
 	return 0;
 }
 
-static void svm_cpuid_update(struct kvm_vcpu *vcpu)
+static int svm_cpuid_update(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
 
 	/* Update nrips enabled cache */
 	svm->nrips_enabled = !!guest_cpuid_has(&svm->vcpu, X86_FEATURE_NRIPS);
 
-	if (!kvm_vcpu_apicv_active(vcpu))
-		return;
+	if (kvm_vcpu_apicv_active(vcpu))
+		guest_cpuid_clear(vcpu, X86_FEATURE_X2APIC);
 
-	guest_cpuid_clear(vcpu, X86_FEATURE_X2APIC);
+	return 0;
 }
 
 static int svm_set_supported_cpuid(u32 func, struct kvm_cpuid_entry2 *entry,
