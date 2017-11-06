@@ -108,6 +108,13 @@ static u64 __read_mostly host_xss;
 static bool __read_mostly enable_pml = 1;
 module_param_named(pml, enable_pml, bool, S_IRUGO);
 
+#ifndef CONFIG_INTEL_SGX_CORE
+#define enable_sgx 0
+#else
+static bool __read_mostly enable_sgx = 1;
+module_param_named(sgx, enable_sgx, bool, S_IRUGO);
+#endif
+
 #define KVM_VMX_TSC_MULTIPLIER_MAX     0xffffffffffffffffULL
 
 /* Guest_tsc -> host_tsc conversion requires 64-bit division.  */
@@ -7093,6 +7100,11 @@ static __init int hardware_setup(void)
 
 	kvm_mce_cap_supported |= MCG_LMCE_P;
 
+#ifdef CONFIG_INTEL_SGX_CORE
+	if (!sgx_enabled || !cpu_has_vmx_encls_vmexit())
+		enable_sgx = 0;
+#endif
+
 	return alloc_kvm_area();
 
 out:
@@ -10018,8 +10030,55 @@ static int vmx_cpuid_update(struct kvm_vcpu *vcpu)
 static int vmx_set_supported_cpuid(u32 func, struct kvm_cpuid_entry2 *entry,
 				   int *nent, int maxnent)
 {
-	if (func == 1 && nested)
-		entry->ecx |= bit(X86_FEATURE_VMX);
+	switch (func) {
+	case 0x1:
+		if (nested)
+			entry->ecx |= bit(X86_FEATURE_VMX);
+		break;
+	case 0x7:
+		if (enable_sgx)
+			entry->ebx |= bit(X86_FEATURE_SGX);
+		break;
+	case 0x12:
+		if (!enable_sgx) {
+			entry->eax = entry->ebx = entry->ecx = entry->edx = 0;
+			break;
+		}
+
+		/* kvm_do_cpuid_entry has already been called for (0x12, 0) */
+		entry->flags |= KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
+
+		/* Index 1: SECS.ATTRIBUTE */
+		if (*nent >= maxnent)
+			return -E2BIG;
+		kvm_do_cpuid_entry(++entry, 0x12, 0x1);
+		entry->flags |= KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
+		++*nent;
+
+		/*
+		 * Index 2: EPC section
+		 *
+		 * Report only a single EPC section to userspace regardless
+		 * of the number of physical EPC sections on the platform.
+		 * Mask the base of the section as userspace doesn't need to
+		 * know the location of the EPC, but keep the size so that
+		 * userspace can make an informed decision regarding the size
+		 * of the virtualized EPC, e.g. to default to a percentage of
+		 * the physical EPC.
+		 */
+		if (*nent >= maxnent)
+			return -E2BIG;
+		kvm_do_cpuid_entry(++entry, 0x12, 0x2);
+		entry->flags |= KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
+		entry->eax &= ~PAGE_MASK;
+		entry->ebx = 0;
+		++*nent;
+
+		break;
+	default:
+		break;
+	}
+
 	return 0;
 }
 
