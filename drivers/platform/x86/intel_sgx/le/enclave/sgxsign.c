@@ -110,6 +110,17 @@ static int pem_passwd_cb(char *buf, int size, int rwflag, void *u)
 	return strlen(buf) >= size ? size - 1 : strlen(buf);
 }
 
+static inline const BIGNUM *get_modulus(RSA *key)
+{
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	return key->n;
+#else
+	const BIGNUM *n;
+	RSA_get0_key(key, &n, NULL, NULL);
+	return n;
+#endif
+}
+
 static RSA *load_sign_key(const char *path)
 {
 	FILE *f;
@@ -125,8 +136,9 @@ static RSA *load_sign_key(const char *path)
 		return NULL;
 	fclose(f);
 
-	if (BN_num_bytes(key->n) != SGX_MODULUS_SIZE) {
-		fprintf(stderr, "Invalid key size %d\n", BN_num_bytes(key->n));
+	if (BN_num_bytes(get_modulus(key)) != SGX_MODULUS_SIZE) {
+		fprintf(stderr, "Invalid key size %d\n",
+			BN_num_bytes(get_modulus(key)));
 		RSA_free(key);
 		return NULL;
 	}
@@ -511,7 +523,7 @@ int main(int argc, char **argv)
 	if (!sign_key)
 		goto out;
 
-	BN_bn2bin(sign_key->n, ss.modulus);
+	BN_bn2bin(get_modulus(sign_key), ss.modulus);
 
 	if (!measure_encl(argv[1], ss.body.mrenclave))
 		goto out;
