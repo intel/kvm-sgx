@@ -87,7 +87,6 @@ u64 sgx_encl_size_max_64;
 u64 sgx_xfrm_mask = 0x3;
 u32 sgx_misc_reserved;
 u32 sgx_xsave_size_tbl[64];
-bool sgx_unlocked_msrs;
 u64 sgx_le_pubkeyhash[4];
 
 static DECLARE_RWSEM(sgx_file_sem);
@@ -267,17 +266,12 @@ static int sgx_dev_init(struct device *parent)
 {
 	struct sgx_context *sgx_dev;
 	unsigned int eax, ebx, ecx, edx;
-	unsigned long fc;
 	int ret;
 	int i;
 
 	pr_info("intel_sgx: " DRV_DESCRIPTION " v" DRV_VERSION "\n");
 
 	sgx_dev = sgxm_ctx_alloc(parent);
-
-	rdmsrl(MSR_IA32_FEATURE_CONTROL, fc);
-	if (fc & FEATURE_CONTROL_SGX_LAUNCH_CONTROL_ENABLE)
-		sgx_unlocked_msrs = true;
 
 	cpuid_count(SGX_CPUID, SGX_CPUID_CAPABILITIES, &eax, &ebx, &ecx, &edx);
 	/* Only allow misc bits supported by the driver. */

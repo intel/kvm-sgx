@@ -236,6 +236,7 @@ static inline int __emodt(struct sgx_secinfo *secinfo, void *epc)
 #ifdef CONFIG_INTEL_SGX_CORE
 
 extern bool sgx_enabled;
+extern bool sgx_lc_enabled;
 
 struct sgx_epc_page;
 
@@ -269,6 +270,8 @@ extern void sgx_put_page(void *epc_page_vaddr);
 extern void sgx_page_reclaimable(struct sgx_epc_page *epc_page);
 extern void sgx_reclaimable_putback(struct list_head *src);
 extern void sgx_page_defunct(struct sgx_epc_page *epc_page);
+extern int sgx_einit(void *sigstruct, struct sgx_einittoken *einittoken,
+		     void *secs, u64 le_pubkey_hash[4]);
 
 #endif /* CONFIG_INTEL_SGX_CORE */
 

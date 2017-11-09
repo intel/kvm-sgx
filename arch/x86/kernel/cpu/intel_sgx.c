@@ -70,6 +70,11 @@
 bool sgx_enabled __ro_after_init = false;
 EXPORT_SYMBOL(sgx_enabled);
 
+bool sgx_lc_enabled __ro_after_init = false;
+EXPORT_SYMBOL(sgx_lc_enabled);
+
+static DEFINE_PER_CPU(u64 [4], sgx_le_pubkey_hash_cache);
+
 #define SGX_NR_EPC_PAGES_TO_SCAN 16
 #define SGX_NR_LOW_EPC_PAGES_DEFAULT 32
 
@@ -327,10 +332,38 @@ void sgx_put_page(void *epc_page_vaddr)
 }
 EXPORT_SYMBOL(sgx_put_page);
 
+int sgx_einit(void *sigstruct, struct sgx_einittoken *einittoken,
+	      void *secs, u64 le_pubkey_hash[4])
+{
+	int i, ret;
+	u64 __percpu *cache;
+
+	if (!sgx_lc_enabled)
+		return __einit(sigstruct, einittoken, secs);
+
+	cache = per_cpu(sgx_le_pubkey_hash_cache, smp_processor_id());
+
+	preempt_disable();
+	for (i = 0; i < 4; i++) {
+		if (le_pubkey_hash[i] == cache[i])
+			continue;
+
+		wrmsrl(MSR_IA32_SGXLEPUBKEYHASH0 + i, le_pubkey_hash[i]);
+		cache[i] = le_pubkey_hash[i];
+	}
+	ret = __einit(sigstruct, einittoken, secs);
+	preempt_enable();
+
+	return ret;
+}
+EXPORT_SYMBOL(sgx_einit);
+
 static __init void __sgx_check_support(void *data) {
 	unsigned int eax, ebx, ecx, edx;
 	unsigned long fc;
 	unsigned long *per_cpu_fc = (unsigned long *)data;
+	int i, cpu;
+	u64 __percpu *cache;
 
 	if (boot_cpu_data.x86_vendor != X86_VENDOR_INTEL)
 		return;
@@ -363,10 +396,17 @@ static __init void __sgx_check_support(void *data) {
 		return;
 	}
 
-	per_cpu_fc[smp_processor_id()] = fc;
+	cpu = smp_processor_id();
+	cache = per_cpu(sgx_le_pubkey_hash_cache, cpu);
+	if (fc & FEATURE_CONTROL_SGX_LAUNCH_CONTROL_ENABLE) {
+		for (i = 0; i < 4; i++)
+			rdmsrl(MSR_IA32_SGXLEPUBKEYHASH0+i, cache[i]);
+	}
+
+	per_cpu_fc[cpu] = fc;
 }
 
-static __init int sgx_check_support() {
+static __init int sgx_check_support(bool *lc_enabled) {
 	int i, ret;
 	unsigned long *fc;
 
@@ -377,11 +417,15 @@ static __init int sgx_check_support() {
 	on_each_cpu(__sgx_check_support, fc, 1);
 
 	ret = 0;
+	*lc_enabled = true;
 	for_each_online_cpu(i) {
 		if (!(fc[i] & FEATURE_CONTROL_SGX_ENABLE)) {
 			ret = -ENODEV;
+			*lc_enabled = false;
 			break;
 		}
+		if (!(fc[i] & FEATURE_CONTROL_SGX_LAUNCH_CONTROL_ENABLE))
+			*lc_enabled = false;
 	}
 
 	kfree(fc);
@@ -502,8 +546,9 @@ static int sgx_init_swapd(void)
 static __init int sgx_init(void)
 {
 	int ret;
+	bool lc_enabled = false;
 
-	ret = sgx_check_support();
+	ret = sgx_check_support(&lc_enabled);
 	if (ret)
 		return ret;
 
@@ -518,6 +563,7 @@ static __init int sgx_init(void)
 	}
 
 	sgx_enabled = true;
+	sgx_lc_enabled = lc_enabled;
 
 	return 0;
 }

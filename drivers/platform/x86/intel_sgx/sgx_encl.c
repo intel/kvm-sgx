@@ -795,26 +795,19 @@ int sgx_encl_add_page(struct sgx_encl *encl, unsigned long addr, void *data,
 	return ret;
 }
 
-static int sgx_einit(struct sgx_encl *encl, struct sgx_sigstruct *sigstruct,
-		     struct sgx_einittoken *token)
+static int sgx_encl_einit(struct sgx_encl *encl,
+			  struct sgx_sigstruct *sigstruct,
+			  struct sgx_einittoken *token)
 {
 	struct sgx_epc_page *secs_epc = encl->secs.epc_page;
 	void *secs_va;
 	int ret;
 
 	secs_va = sgx_get_page(secs_epc);
-	ret = __einit(sigstruct, token, secs_va);
+	ret = sgx_einit(sigstruct, token, secs_va, sgx_le_pubkeyhash);
 	sgx_put_page(secs_va);
 
 	return ret;
-}
-
-static void sgx_update_pubkeyhash(void)
-{
-	wrmsrl(MSR_IA32_SGXLEPUBKEYHASH0, sgx_le_pubkeyhash[0]);
-	wrmsrl(MSR_IA32_SGXLEPUBKEYHASH1, sgx_le_pubkeyhash[1]);
-	wrmsrl(MSR_IA32_SGXLEPUBKEYHASH2, sgx_le_pubkeyhash[2]);
-	wrmsrl(MSR_IA32_SGXLEPUBKEYHASH3, sgx_le_pubkeyhash[3]);
 }
 
 /**
@@ -850,18 +843,7 @@ int sgx_encl_init(struct sgx_encl *encl, struct sgx_sigstruct *sigstruct,
 
 	for (i = 0; i < SGX_EINIT_SLEEP_COUNT; i++) {
 		for (j = 0; j < SGX_EINIT_SPIN_COUNT; j++) {
-			ret = sgx_einit(encl, sigstruct, token);
-
-			if (ret == SGX_INVALID_ATTRIBUTE ||
-			    ret == SGX_INVALID_EINITTOKEN) {
-				if (sgx_unlocked_msrs) {
-					preempt_disable();
-					sgx_update_pubkeyhash();
-					ret = sgx_einit(encl, sigstruct, token);
-					preempt_enable();
-				}
-			}
-
+			ret = sgx_encl_einit(encl, sigstruct, token);
 			if (ret == SGX_UNMASKED_EVENT)
 				continue;
 			else
