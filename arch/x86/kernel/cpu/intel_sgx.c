@@ -327,41 +327,66 @@ void sgx_put_page(void *epc_page_vaddr)
 }
 EXPORT_SYMBOL(sgx_put_page);
 
-static __init int sgx_check_support(void) {
+static __init void __sgx_check_support(void *data) {
 	unsigned int eax, ebx, ecx, edx;
 	unsigned long fc;
+	unsigned long *per_cpu_fc = (unsigned long *)data;
 
 	if (boot_cpu_data.x86_vendor != X86_VENDOR_INTEL)
-		return -ENODEV;
+		return;
 
 	if (!boot_cpu_has(X86_FEATURE_SGX)) {
 		pr_err("intel_sgx: the CPU is missing SGX\n");
-		return -ENODEV;
+		return;
 	}
 
 	rdmsrl(MSR_IA32_FEATURE_CONTROL, fc);
 	if (!(fc & FEATURE_CONTROL_LOCKED)) {
 		pr_err("intel_sgx: the feature control MSR is not locked\n");
-		return -ENODEV;
+		return;
 	}
 
 	if (!(fc & FEATURE_CONTROL_SGX_ENABLE)) {
 		pr_err("intel_sgx: SGX is not enabled\n");
-		return -ENODEV;
+		return;
 	}
 
 	cpuid(0, &eax, &ebx, &ecx, &edx);
 	if (eax < SGX_CPUID) {
 		pr_err("intel_sgx: CPUID is missing the SGX leaf\n");
-		return -ENODEV;
+		return;
 	}
 
 	cpuid_count(SGX_CPUID, SGX_CPUID_CAPABILITIES, &eax, &ebx, &ecx, &edx);
 	if (!(eax & 1)) {
 		pr_err("intel_sgx: CPU does not support the SGX1 instructions\n");
-		return -ENODEV;
+		return;
 	}
-	return 0;
+
+	per_cpu_fc[smp_processor_id()] = fc;
+}
+
+static __init int sgx_check_support() {
+	int i, ret;
+	unsigned long *fc;
+
+	fc = kzalloc(nr_cpu_ids * sizeof(unsigned long), GFP_KERNEL);
+	if (!fc)
+		return -ENOMEM;
+
+	on_each_cpu(__sgx_check_support, fc, 1);
+
+	ret = 0;
+	for_each_online_cpu(i) {
+		if (!(fc[i] & FEATURE_CONTROL_SGX_ENABLE)) {
+			ret = -ENODEV;
+			break;
+		}
+	}
+
+	kfree(fc);
+
+	return ret;
 }
 
 static __init void sgx_teardown_epc(void)
