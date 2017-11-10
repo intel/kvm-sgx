@@ -1063,6 +1063,7 @@ struct kvm_x86_ops {
 	void (*cancel_hv_timer)(struct kvm_vcpu *vcpu);
 
 	void (*setup_mce)(struct kvm_vcpu *vcpu);
+	int (*enable_virtual_epc)(struct kvm *kvm, u64 epc_base, u64 epc_size);
 };
 
 struct kvm_arch_async_pf {
