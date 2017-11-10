@@ -2750,6 +2750,9 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_X2APIC_API:
 		r = KVM_X2APIC_API_VALID_FLAGS;
 		break;
+	case KVM_CAP_X86_VIRTUAL_EPC:
+		r = !!kvm_x86_ops->enable_virtual_epc;
+		break;
 	default:
 		r = 0;
 		break;
@@ -4015,6 +4018,18 @@ split_irqchip_unlock:
 			kvm->arch.x2apic_broadcast_quirk_disabled = true;
 
 		r = 0;
+		break;
+	case KVM_CAP_X86_VIRTUAL_EPC:
+		mutex_lock(&kvm->lock);
+		if (!kvm_x86_ops->enable_virtual_epc)
+			r = -EINVAL;
+		else if (kvm->created_vcpus)
+			r = -EEXIST;
+		else
+			r = kvm_x86_ops->enable_virtual_epc(kvm,
+							    cap->args[0],
+							    cap->args[1]);
+		mutex_unlock(&kvm->lock);
 		break;
 	default:
 		r = -EINVAL;
