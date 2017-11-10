@@ -1093,6 +1093,7 @@ struct kvm_x86_ops {
 	int (*mem_enc_unreg_region)(struct kvm *kvm, struct kvm_enc_region *argp);
 
 	int (*get_msr_feature)(struct kvm_msr_entry *entry);
+	int (*enable_virtual_epc)(struct kvm *kvm, u64 epc_base, u64 epc_size);
 };
 
 struct kvm_arch_async_pf {
