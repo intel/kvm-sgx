@@ -847,6 +847,8 @@ struct kvm_arch {
 
 	bool x2apic_format;
 	bool x2apic_broadcast_quirk_disabled;
+
+	void *priv;     /* x86 vendor specific data */
 };
 
 struct kvm_vm_stat {
