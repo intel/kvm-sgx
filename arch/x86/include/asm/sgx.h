@@ -255,6 +255,8 @@ enum sgx_alloc_flags {
 
 extern struct sgx_epc_page *sgx_alloc_page(unsigned int flags, void *owner,
 					   struct sgx_epc_operations *ops);
+extern int sgx_batch_alloc_pages(int nr_pages, struct list_head *dst,
+				 void *owner, struct sgx_epc_operations *ops);
 extern void sgx_free_page(struct sgx_epc_page *entry);
 extern void *sgx_get_page(struct sgx_epc_page *entry);
 extern void sgx_put_page(void *epc_page_vaddr);
