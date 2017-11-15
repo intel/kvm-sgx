@@ -263,6 +263,34 @@ struct sgx_epc_page *sgx_alloc_page(unsigned int flags, void *owner,
 }
 EXPORT_SYMBOL(sgx_alloc_page);
 
+int sgx_batch_alloc_pages(int nr_pages, struct list_head *dst,
+			  void *owner, struct sgx_epc_operations *ops)
+{
+	int i = 0;
+	struct sgx_epc_page *entry, *tmp;
+
+	spin_lock(&sgx_free_list_lock);
+	if (nr_pages > sgx_nr_free_pages)
+		goto out;
+
+	sgx_nr_free_pages -= nr_pages;
+
+	for (i = 0; i < nr_pages && !list_empty(&sgx_free_list); i++) {
+		entry = list_first_entry(&sgx_free_list, struct sgx_epc_page,
+					 list);
+		list_move_tail(&entry->list, dst);
+	}
+	if (WARN_ON_ONCE(i < nr_pages)) {
+		list_for_each_entry_safe(entry, tmp, dst, list)
+			list_move_tail(&entry->list, &sgx_free_list);
+		sgx_nr_free_pages += nr_pages;
+	}
+out:
+	spin_unlock(&sgx_free_list_lock);
+	return (i < nr_pages) ? -ENOMEM : 0;
+}
+EXPORT_SYMBOL(sgx_batch_alloc_pages);
+
 void sgx_free_page(struct sgx_epc_page *entry)
 {
 	if (WARN_ON(!list_empty(&entry->list)))
