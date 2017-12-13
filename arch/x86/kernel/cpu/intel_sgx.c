@@ -399,8 +399,11 @@ static __init void __sgx_check_support(void *data) {
 	cpu = smp_processor_id();
 	cache = per_cpu(sgx_le_pubkey_hash_cache, cpu);
 	if (fc & FEATURE_CONTROL_SGX_LAUNCH_CONTROL_ENABLE) {
-		for (i = 0; i < 4; i++)
+		for (i = 0; i < 4; i++) {
 			rdmsrl(MSR_IA32_SGXLEPUBKEYHASH0+i, cache[i]);
+			cache[i] = ((cache[i] & 0xffffffff) << 32) |
+				   ((cache[i] >> 32) & 0xffffffff);
+		}
 	}
 
 	per_cpu_fc[cpu] = fc;
