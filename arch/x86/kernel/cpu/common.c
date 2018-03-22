@@ -866,6 +866,13 @@ void get_cpu_cap(struct cpuinfo_x86 *c)
 		}
 	}
 
+	/* Intel SGX features: level 0x00000012 */
+	if (c->cpuid_level >= 0x00000012) {
+		cpuid(0x00000012, &eax, &ebx, &ecx, &edx);
+
+		c->x86_capability[CPUID_12_EAX] = eax;
+	}
+
 	/* AMD-defined flags: level 0x80000001 */
 	eax = cpuid_eax(0x80000000);
 	c->extended_cpuid_level = eax;
