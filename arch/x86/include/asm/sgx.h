@@ -13,8 +13,36 @@
 
 #define SGX_MAX_EPC_BANKS 8
 
+struct sgx_epc_page;
+
+/**
+ * struct sgx_epc_page_ops - operations to reclaim an EPC page
+ * @get:	Pin the page. Returns false when the consumer is freeing the
+ *		page itself.
+ * @put:	Unpin the page.
+ * @reclaim:	Try to reclaim the page. Returns false when the consumer is
+ *		actively using needs the page.
+ * @block:	Perform EBLOCK on the page.
+ * @write:	Perform ETRACK (when required) and EWB on the page.
+ *
+ * These operations must be implemented by the EPC consumer to assist to reclaim
+ * EPC pages.
+ */
+struct sgx_epc_page_ops {
+	bool (*get)(struct sgx_epc_page *epc_page);
+	void (*put)(struct sgx_epc_page *epc_page);
+	bool (*reclaim)(struct sgx_epc_page *epc_page);
+	void (*block)(struct sgx_epc_page *epc_page);
+	void (*write)(struct sgx_epc_page *epc_page);
+};
+
+struct sgx_epc_page_impl {
+	const struct sgx_epc_page_ops *ops;
+};
+
 struct sgx_epc_page {
 	unsigned long desc;
+	struct sgx_epc_page_impl *impl;
 	struct list_head list;
 };
 
@@ -31,6 +59,10 @@ struct sgx_epc_bank {
 extern bool sgx_enabled;
 extern bool sgx_lc_enabled;
 extern struct sgx_epc_bank sgx_epc_banks[SGX_MAX_EPC_BANKS];
+
+enum sgx_alloc_flags {
+	SGX_ALLOC_ATOMIC	= BIT(0),
+};
 
 /*
  * enum sgx_epc_page_desc - defines bits and masks for an EPC page's desc
@@ -69,6 +101,14 @@ static inline void *sgx_epc_addr(struct sgx_epc_page *page)
 	return (void *)(bank->va + (page->desc & PAGE_MASK) - bank->pa);
 }
 
+struct sgx_epc_page *sgx_alloc_page(struct sgx_epc_page_impl *impl,
+				    unsigned int flags);
+int __sgx_free_page(struct sgx_epc_page *page);
+void sgx_free_page(struct sgx_epc_page *page);
+void sgx_page_reclaimable(struct sgx_epc_page *page);
+struct page *sgx_get_backing(struct file *file, pgoff_t index);
+void sgx_put_backing(struct page *backing_page, bool write);
+
 /*
  * ENCLS has its own (positive value) error codes and also generates
  * ENCLS specific #GP and #PF faults.  On a fault, __encls{,_ret}_N
@@ -76,7 +116,6 @@ static inline void *sgx_epc_addr(struct sgx_epc_page *page)
  * the fault vector (as opposed to the a generic -EFAULT) without
  * causing collisions between faults and SGX error codes.
  */
-
 #define IS_ENCLS_FAULT(r) ((r) & 0xffff0000)
 #define ENCLS_FAULT_VECTOR(r) ((r) >> 16)
 
