@@ -40,6 +40,12 @@ static int sgx_nr_epc_banks;
 static struct task_struct *ksgxswapd_tsk;
 static DECLARE_WAIT_QUEUE_HEAD(ksgxswapd_waitq);
 
+/*
+ * A cache for last known values of IA32_SGXLEPUBKEYHASHx MSRs. Cache entries
+ * are initialized when they are first used by sgx_einit().
+ */
+static DEFINE_PER_CPU(u64 [4], sgx_le_pubkey_hash_cache);
+
 /**
  * sgx_reclaim_pages - reclaim EPC pages from the consumers
  *
@@ -320,6 +326,38 @@ void sgx_put_backing(struct page *backing_page, bool write)
 	put_page(backing_page);
 }
 EXPORT_SYMBOL_GPL(sgx_put_backing);
+
+/**
+ * sgx_einit - EINIT an enclave with the appropriate LE pubkey hash
+ * @sigstruct:		a pointer to the enclave's sigstruct
+ * @token:		a pointer to the enclave's EINIT token
+ * @secs_page:		a pointer to the enclave's SECS EPC page
+ * @le_pubkey_hash:	the desired LE pubkey hash for EINIT
+ */
+int sgx_einit(struct sgx_sigstruct *sigstruct, struct sgx_einittoken *token,
+	      struct sgx_epc_page *secs_page, u64 le_pubkey_hash[4])
+{
+	u64 __percpu *cache;
+	int i, ret;
+
+	if (!sgx_lc_enabled)
+		return __einit(sigstruct, token, sgx_epc_addr(secs_page));
+
+	cache = per_cpu(sgx_le_pubkey_hash_cache, smp_processor_id());
+
+	preempt_disable();
+	for (i = 0; i < 4; i++) {
+		if (le_pubkey_hash[i] == cache[i])
+			continue;
+
+		wrmsrl(MSR_IA32_SGXLEPUBKEYHASH0 + i, le_pubkey_hash[i]);
+		cache[i] = le_pubkey_hash[i];
+	}
+	ret = __einit(sigstruct, token, sgx_epc_addr(secs_page));
+	preempt_enable();
+	return ret;
+}
+EXPORT_SYMBOL(sgx_einit);
 
 static __init int sgx_init_epc_bank(u64 addr, u64 size, unsigned long index,
 				    struct sgx_epc_bank *bank)

@@ -108,6 +108,8 @@ void sgx_free_page(struct sgx_epc_page *page);
 void sgx_page_reclaimable(struct sgx_epc_page *page);
 struct page *sgx_get_backing(struct file *file, pgoff_t index);
 void sgx_put_backing(struct page *backing_page, bool write);
+int sgx_einit(struct sgx_sigstruct *sigstruct, struct sgx_einittoken *token,
+	      struct sgx_epc_page *secs_page, u64 le_pubkey_hash[4]);
 
 /*
  * ENCLS has its own (positive value) error codes and also generates
