@@ -14,6 +14,25 @@ enum sgx_cpuid {
 	SGX_CPUID_EPC_BANKS	= 2,
 };
 
+enum sgx_encls_leafs {
+	ECREATE	= 0x0,
+	EADD	= 0x1,
+	EINIT	= 0x2,
+	EREMOVE	= 0x3,
+	EDGBRD	= 0x4,
+	EDGBWR	= 0x5,
+	EEXTEND	= 0x6,
+	ELDB	= 0x7,
+	ELDU	= 0x8,
+	EBLOCK	= 0x9,
+	EPA	= 0xA,
+	EWB	= 0xB,
+	ETRACK	= 0xC,
+	EAUG	= 0xD,
+	EMODPR	= 0xE,
+	EMODT	= 0xF,
+};
+
 #define SGX_SSA_GPRS_SIZE		182
 #define SGX_SSA_MISC_EXINFO_SIZE	16
 
