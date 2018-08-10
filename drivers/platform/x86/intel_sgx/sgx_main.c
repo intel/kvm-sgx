@@ -5,6 +5,7 @@
 #include <linux/cdev.h>
 #include <linux/platform_device.h>
 #include <linux/suspend.h>
+#include <asm/traps.h>
 #include "sgx.h"
 
 MODULE_DESCRIPTION("Intel SGX Driver");
@@ -17,6 +18,7 @@ u64 sgx_encl_size_max_64;
 u64 sgx_xfrm_mask = 0x3;
 u32 sgx_misc_reserved;
 u32 sgx_xsave_size_tbl[64];
+int sgx_epcm_trapnr;
 
 #ifdef CONFIG_COMPAT
 long sgx_compat_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
@@ -159,6 +161,9 @@ static int sgx_dev_init(struct device *parent)
 				sgx_xsave_size_tbl[i] = eax + ebx;
 		}
 	}
+
+	sgx_epcm_trapnr = boot_cpu_has(X86_FEATURE_SGX2) ?
+				(X86_TRAP_PF | X86_PF_SGX) : X86_TRAP_GP;
 
 	sgx_add_page_wq = alloc_workqueue("intel_sgx-add-page-wq",
 					  WQ_UNBOUND | WQ_FREEZABLE, 1);

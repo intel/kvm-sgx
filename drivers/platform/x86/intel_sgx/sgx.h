@@ -158,16 +158,42 @@ extern u64 sgx_encl_size_max_64;
 extern u64 sgx_xfrm_mask;
 extern u32 sgx_misc_reserved;
 extern u32 sgx_xsave_size_tbl[64];
+extern int sgx_epcm_trapnr;
 
 extern const struct vm_operations_struct sgx_vm_ops;
 
 int sgx_encl_find(struct mm_struct *mm, unsigned long addr,
 		  struct vm_area_struct **vma);
 void sgx_invalidate(struct sgx_encl *encl, bool flush_cpus);
-#define SGX_INVD(ret, encl, fmt, ...)		\
-do {						\
-	if (WARN(ret, fmt, ##__VA_ARGS__))	\
-		sgx_invalidate(encl, true);	\
+
+/**
+ * SGX_INVD - invalidate an enclave on failure, i.e. if ret != 0
+ *
+ * @ret:	a return code to check
+ * @encl:	pointer to an enclave
+ * @fmt:	message for WARN if failure is detected
+ * @...:	optional arguments used by @fmt
+ *
+ * SGX_INVD for use in flows where an error, i.e. @ret is non-zero, is
+ * indicative of a driver bug.  Invalidate @encl if @ret indicates an
+ * error and WARN on error unless the error was due to a fault signaled
+ * by the EPCM
+ *
+ * Faults from the EPCM occur in normal kernel operation, e.g. due to
+ * misonfigured mprotect() from userspace or because the EPCM invalidated
+ * all EPC pages.  The EPCM invalidates the EPC on transitions to S3 or
+ * lower sleep states, and VMMs emulate loss of EPC when migrating VMs.
+ *
+ * Defined as a macro instead of a function so that WARN can provide a
+ * more precise trace.
+ */
+#define SGX_INVD(ret, encl, fmt, ...)					  \
+do {									  \
+	if (unlikely(ret)) {						  \
+		int trapnr = IS_ENCLS_FAULT(ret) ? ENCLS_TRAPNR(ret) : 0; \
+		WARN(trapnr != sgx_epcm_trapnr, fmt, ##__VA_ARGS__);	  \
+		sgx_invalidate(encl, true);				  \
+	}								  \
 } while (0)
 
 struct sgx_encl *sgx_encl_alloc(struct sgx_secs *secs);
