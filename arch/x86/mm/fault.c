@@ -961,10 +961,13 @@ static noinline void
 bad_area_access_error(struct pt_regs *regs, unsigned long error_code,
 		      unsigned long address, struct vm_area_struct *vma)
 {
+	int si_code = SEGV_ACCERR;
+
 	if (bad_area_access_from_pkeys(error_code, vma))
-		__bad_area(regs, error_code, address, vma, SEGV_PKUERR);
-	else
-		__bad_area(regs, error_code, address, vma, SEGV_ACCERR);
+		si_code = SEGV_PKUERR;
+	else if (unlikely(error_code & X86_PF_SGX))
+		si_code = SEGV_SGXERR;
+	__bad_area(regs, error_code, address, vma, si_code);
 }
 
 static void
@@ -1152,6 +1155,17 @@ access_error(unsigned long error_code, struct vm_area_struct *vma)
 	 * a follow-up action to resolve the fault, like a COW.
 	 */
 	if (error_code & X86_PF_PK)
+		return 1;
+
+	/*
+	 * Access is blocked by the Enclave Page Cache Map (EPCM),
+	 * i.e. the access is allowed by the PTE but not the EPCM.
+	 * This usually happens when the EPCM is yanked out from
+	 * under us, e.g. by hardware after a suspend/resume cycle.
+	 * In any case, there is nothing that can be done by the
+	 * kernel to resolve the fault (short of killing the task).
+	 */
+	if (unlikely(error_code & X86_PF_SGX))
 		return 1;
 
 	/*
