@@ -225,7 +225,11 @@ typedef struct siginfo {
 #else
 # define SEGV_PKUERR	4	/* failed protection key checks */
 #endif
+#ifdef __x86_64__
+#define SEGV_SGXERR	5	/* SGX Enclave Page Cache Map fault */
+#else
 #define SEGV_ACCADI	5	/* ADI not enabled for mapped object */
+#endif
 #define SEGV_ADIDERR	6	/* Disrupting MCD error */
 #define SEGV_ADIPERR	7	/* Precise MCD exception */
 #define NSIGSEGV	7
