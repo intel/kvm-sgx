@@ -187,13 +187,13 @@ void sgx_invalidate(struct sgx_encl *encl, bool flush_cpus);
  * Defined as a macro instead of a function so that WARN can provide a
  * more precise trace.
  */
-#define SGX_INVD(ret, encl, fmt, ...)					  \
-do {									  \
-	if (unlikely(ret)) {						  \
-		int trapnr = IS_ENCLS_FAULT(ret) ? ENCLS_TRAPNR(ret) : 0; \
-		WARN(trapnr != sgx_epcm_trapnr, fmt, ##__VA_ARGS__);	  \
-		sgx_invalidate(encl, true);				  \
-	}								  \
+#define SGX_INVD(ret, encl, fmt, ...)					     \
+do {									     \
+	if (unlikely(ret)) {						     \
+		int trapnr = IS_ENCLS_FAULT(ret) ? ENCLS_TRAPNR(ret) : 0;    \
+		WARN(trapnr != sgx_epcm_trapnr, "sgx: " fmt, ##__VA_ARGS__); \
+		sgx_invalidate(encl, true);				     \
+	}								     \
 } while (0)
 
 struct sgx_encl *sgx_encl_alloc(struct sgx_secs *secs);
