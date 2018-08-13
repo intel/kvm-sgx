@@ -707,10 +707,19 @@ no_context(struct pt_regs *regs, unsigned long error_code,
 {
 	struct task_struct *tsk = current;
 	unsigned long flags;
-	int sig;
+	int sig, trapnr;
+
+	/*
+	 * The actual vector is #PF.  Propagate the PF_SGX bit from the error
+	 * code to the trapnr so that SGX code can filter out "benign" faults.
+	 * PF_SGX (bit 15) doesn't collide with fault vectors (bits 4:0) and
+	 * can only be set on SGX EPC accesses, i.e. only code emitting ENCLS
+	 * instructions needs to be prepared to handle PF_SGX in trapnr.
+	 */
+	trapnr = X86_TRAP_PF | (error_code & X86_PF_SGX);
 
 	/* Are we prepared to handle this kernel fault? */
-	if (fixup_exception(regs, X86_TRAP_PF)) {
+	if (fixup_exception(regs, trapnr)) {
 		/*
 		 * Any interrupt that takes a fault gets the fixup. This makes
 		 * the below recursive fault logic only apply to a faults from
