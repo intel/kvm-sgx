@@ -766,6 +766,19 @@ static void svm_set_interrupt_shadow(struct kvm_vcpu *vcpu, int mask)
 
 }
 
+static bool svm_emulate_resume_guest(struct kvm_vcpu *vcpu, void *insn,
+				     int insn_len)
+{
+	/*
+	 * Under certain conditions insn_len may be zero on #NPF.  This can
+	 * happen if a guest gets a page-fault on data access but the HW table
+	 * walker is not able to read the instruction page (e.g instruction
+	 * page is not present in memory).  In those cases we simply restart
+	 * the guest.
+	 */
+	return (insn && !insn_len);
+}
+
 static void skip_emulated_instruction(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
@@ -7096,6 +7109,7 @@ static struct kvm_x86_ops svm_x86_ops __ro_after_init = {
 
 	.run = svm_vcpu_run,
 	.handle_exit = handle_exit,
+	.emulate_resume_guest = svm_emulate_resume_guest,
 	.skip_emulated_instruction = skip_emulated_instruction,
 	.set_interrupt_shadow = svm_set_interrupt_shadow,
 	.get_interrupt_shadow = svm_get_interrupt_shadow,
