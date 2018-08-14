@@ -1577,6 +1577,11 @@ static int vmx_rtit_ctl_check(struct kvm_vcpu *vcpu, u64 data)
 	return 0;
 }
 
+static bool vmx_is_emulatable(struct kvm_vcpu *vcpu, void *insn, int insn_len)
+{
+	return true;
+}
+
 static int skip_emulated_instruction(struct kvm_vcpu *vcpu)
 {
 	unsigned long rip;
@@ -7647,11 +7652,6 @@ static int enable_smi_window(struct kvm_vcpu *vcpu)
 	return 0;
 }
 
-static bool vmx_need_emulation_on_page_fault(struct kvm_vcpu *vcpu)
-{
-	return false;
-}
-
 static bool vmx_apic_init_signal_blocked(struct kvm_vcpu *vcpu)
 {
 	return to_vmx(vcpu)->nested.vmxon;
@@ -7987,7 +7987,7 @@ static struct kvm_x86_ops vmx_x86_ops __ro_after_init = {
 	.get_vmcs12_pages = NULL,
 	.nested_enable_evmcs = NULL,
 	.nested_get_evmcs_version = NULL,
-	.need_emulation_on_page_fault = vmx_need_emulation_on_page_fault,
+	.is_emulatable = vmx_is_emulatable,
 	.apic_init_signal_blocked = vmx_apic_init_signal_blocked,
 };
 

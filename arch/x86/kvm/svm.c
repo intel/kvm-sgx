@@ -7294,12 +7294,10 @@ failed:
 	return ret;
 }
 
-static bool svm_need_emulation_on_page_fault(struct kvm_vcpu *vcpu)
+static bool svm_is_emulatable(struct kvm_vcpu *vcpu, void *insn, int insn_len)
 {
-	unsigned long cr4 = kvm_read_cr4(vcpu);
-	bool smep = cr4 & X86_CR4_SMEP;
-	bool smap = cr4 & X86_CR4_SMAP;
-	bool is_user = svm_get_cpl(vcpu) == 3;
+	bool smep, smap, is_user;
+	unsigned long cr4;
 
 	/*
 	 * Detect and workaround Errata 1096 Fam_17h_00_0Fh.
@@ -7341,6 +7339,13 @@ static bool svm_need_emulation_on_page_fault(struct kvm_vcpu *vcpu)
 	 * instruction pointer so we will not able to workaround it. Lets
 	 * print the error and request to kill the guest.
 	 */
+	if (likely(!insn || insn_len))
+		return true;
+
+	cr4 = kvm_read_cr4(vcpu);
+	smep = cr4 & X86_CR4_SMEP;
+	smap = cr4 & X86_CR4_SMAP;
+	is_user = svm_get_cpl(vcpu) == 3;
 	if (smap && (!smep || is_user)) {
 		if (!sev_guest(vcpu->kvm))
 			return true;
@@ -7520,7 +7525,7 @@ static struct kvm_x86_ops svm_x86_ops __ro_after_init = {
 	.nested_enable_evmcs = NULL,
 	.nested_get_evmcs_version = NULL,
 
-	.need_emulation_on_page_fault = svm_need_emulation_on_page_fault,
+	.is_emulatable = svm_is_emulatable,
 
 	.apic_init_signal_blocked = svm_apic_init_signal_blocked,
 };
