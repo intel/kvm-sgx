@@ -3079,6 +3079,12 @@ static void vmx_set_interrupt_shadow(struct kvm_vcpu *vcpu, int mask)
 		vmcs_write32(GUEST_INTERRUPTIBILITY_INFO, interruptibility);
 }
 
+static bool vmx_emulate_resume_guest(struct kvm_vcpu *vcpu, void *insn,
+				     int insn_len)
+{
+	return false;
+}
+
 static void skip_emulated_instruction(struct kvm_vcpu *vcpu)
 {
 	unsigned long rip;
@@ -13463,6 +13469,7 @@ static struct kvm_x86_ops vmx_x86_ops __ro_after_init = {
 
 	.run = vmx_vcpu_run,
 	.handle_exit = vmx_handle_exit,
+	.emulate_resume_guest = vmx_emulate_resume_guest,
 	.skip_emulated_instruction = skip_emulated_instruction,
 	.set_interrupt_shadow = vmx_set_interrupt_shadow,
 	.get_interrupt_shadow = vmx_get_interrupt_shadow,
