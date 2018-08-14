@@ -1454,6 +1454,11 @@ static int vmx_rtit_ctl_check(struct kvm_vcpu *vcpu, u64 data)
 	return 0;
 }
 
+static bool vmx_emulate_resume_guest(struct kvm_vcpu *vcpu, void *insn,
+				     int insn_len)
+{
+	return false;
+}
 
 static void skip_emulated_instruction(struct kvm_vcpu *vcpu)
 {
@@ -7738,6 +7743,7 @@ static struct kvm_x86_ops vmx_x86_ops __ro_after_init = {
 
 	.run = vmx_vcpu_run,
 	.handle_exit = vmx_handle_exit,
+	.emulate_resume_guest = vmx_emulate_resume_guest,
 	.skip_emulated_instruction = skip_emulated_instruction,
 	.set_interrupt_shadow = vmx_set_interrupt_shadow,
 	.get_interrupt_shadow = vmx_get_interrupt_shadow,
