@@ -1263,7 +1263,7 @@ struct kvm_x86_ops {
 				   uint16_t *vmcs_version);
 	uint16_t (*nested_get_evmcs_version)(struct kvm_vcpu *vcpu);
 
-	bool (*need_emulation_on_page_fault)(struct kvm_vcpu *vcpu);
+	bool (*is_emulatable)(struct kvm_vcpu *vcpu, void *insn, int insn_len);
 
 	bool (*apic_init_signal_blocked)(struct kvm_vcpu *vcpu);
 	int (*enable_direct_tlbflush)(struct kvm_vcpu *vcpu);
