@@ -53,6 +53,7 @@
 #include <asm/mmu_context.h>
 #include <asm/spec-ctrl.h>
 #include <asm/mshyperv.h>
+#include <asm/sgx.h>
 
 #include "trace.h"
 #include "pmu.h"
@@ -332,12 +333,16 @@ static const struct kernel_param_ops vmentry_l1d_flush_ops = {
 };
 module_param_cb(vmentry_l1d_flush, &vmentry_l1d_flush_ops, NULL, 0644);
 
+struct vmx_epc;
+
 struct kvm_vmx {
 	struct kvm kvm;
 
 	unsigned int tss_addr;
 	bool ept_identity_pagetable_done;
 	gpa_t ept_identity_map_addr;
+
+	struct vmx_epc *epc;
 };
 
 #define NR_AUTOLOAD_MSRS 8
@@ -1319,6 +1324,248 @@ static const struct kvm_vmx_segment_field {
 static u64 host_efer;
 
 static void ept_save_pdptrs(struct kvm_vcpu *vcpu);
+
+#ifdef CONFIG_INTEL_SGX_CORE
+
+struct vmx_epc_page {
+	struct sgx_epc_page *epc_page;
+	struct sgx_epc_page_impl impl;
+};
+
+struct vmx_epc {
+	u64 base;
+	u64 size;
+	struct rw_semaphore lock;
+	struct radix_tree_root page_tree;
+	struct list_head cache;
+};
+
+static inline struct vmx_epc *to_vmx_epc(struct kvm *kvm)
+{
+	return to_kvm_vmx(kvm)->epc;
+}
+
+static struct sgx_epc_page_ops vmx_epc_ops;
+
+static int __vmx_epc_fault(struct vmx_epc *epc, struct vm_area_struct *vma,
+			   unsigned long hva)
+{
+	struct sgx_epc_page *epc_page;
+	struct vmx_epc_page *page;
+	gfn_t gfn;
+	int ret;
+
+	gfn = PFN_DOWN(epc->base + (hva - vma->vm_start));
+
+	page = radix_tree_lookup(&epc->page_tree, gfn);
+	if (page && page->epc_page)
+		return 0;
+
+	if (!page) {
+		page = kzalloc(sizeof(*page), GFP_KERNEL);
+		if (!page)
+			return -ENOMEM;
+		page->impl.ops = &vmx_epc_ops;
+
+		ret = radix_tree_insert(&epc->page_tree, gfn, page);
+		if (unlikely(ret)) {
+			kfree(page);
+			return ret;
+		}
+	}
+
+	if (WARN_ON(list_empty(&epc->cache)))
+		return -EFAULT;
+	epc_page = list_first_entry(&epc->cache, struct sgx_epc_page, list);
+	list_del(&epc_page->list);
+	epc_page->impl = &page->impl;
+
+	ret = vm_insert_pfn(vma, hva, PFN_DOWN(epc_page->desc));
+	if (unlikely(ret)) {
+		sgx_free_page(epc_page);
+		return ret;
+	}
+
+	page->epc_page = epc_page;
+
+	return 0;
+}
+
+static int vmx_epc_fault(struct vm_fault *vmf)
+{
+	struct vm_area_struct *vma = vmf->vma;
+	struct vmx_epc *epc = (struct vmx_epc *)vma->vm_private_data;
+	int ret;
+
+	if (WARN_ON(!epc || (vmf->address - vma->vm_start) > epc->size))
+		return VM_FAULT_SIGBUS;
+
+	down_write(&epc->lock);
+	ret = __vmx_epc_fault(epc, vmf->vma, vmf->address);
+	up_write(&epc->lock);
+
+	if (!ret || signal_pending(current))
+		return VM_FAULT_NOPAGE;
+
+	if (ret == -EBUSY) {
+		up_read(&vma->vm_mm->mmap_sem);
+		return VM_FAULT_RETRY;
+	}
+
+	return VM_FAULT_SIGBUS;
+}
+
+static void vmx_epc_close(struct vm_area_struct *vma)
+{
+
+}
+
+static struct vm_operations_struct vmx_epc_vm_ops = {
+	.fault = vmx_epc_fault,
+	.close = vmx_epc_close, /* prevents VMAs from being merged */
+};
+
+static int vmx_setup_epc(struct vmx_epc *epc)
+{
+	struct sgx_epc_page *page, *tmp;
+	unsigned long i, nr_pages;
+
+	INIT_LIST_HEAD(&epc->cache);
+
+	nr_pages = (epc->size >> PAGE_SHIFT);
+
+	for (i = 0; i < nr_pages; i++) {
+		page = sgx_alloc_page(NULL, SGX_ALLOC_ATOMIC);
+		if (IS_ERR(page))
+			break;
+		list_add(&page->list, &epc->cache);
+	}
+	if (i == nr_pages)
+		return 0;
+
+	list_for_each_entry_safe(page, tmp, &epc->cache, list) {
+		list_del(&page->list);
+		sgx_free_page(page);
+	}
+
+	return -ENOMEM;
+}
+
+static int vmx_set_sgx_epc(struct kvm *kvm, u64 base, u64 size)
+{
+	struct kvm_vmx *kvm_vmx = to_kvm_vmx(kvm);
+	struct vmx_epc *epc = to_vmx_epc(kvm);
+	struct kvm_memory_slot *slot;
+	struct vm_area_struct *vma;
+	int ret;
+
+	/*
+	 * The EPC has already been initialized for this VM.
+	 */
+	if (epc)
+		return -EEXIST;
+
+	/*
+	 * The EPC base and size must be 4k aligned and the region
+	 * must not wrap the 4g boundary.  The base/size alignment
+	 * requirements are intentionally less restrictive than bare
+	 * metal so as to provide finer granularity for slicing up
+	 * the actual EPC.  Bare metal EPC must be naturally aligned
+	 * because the CPU uses range registers to protect the EPC.
+	 */
+	if (!IS_ALIGNED(base, 4096) || !IS_ALIGNED(size, 4096))
+		return -EINVAL;
+
+	if (base < 0x100000000ULL && (base + size) > 0x100000000ULL)
+		return -EINVAL;
+
+	epc = kzalloc(sizeof(struct vmx_epc), GFP_KERNEL);
+	if (!epc)
+		return -ENOMEM;
+
+	init_rwsem(&epc->lock);
+	INIT_RADIX_TREE(&epc->page_tree, GFP_KERNEL);
+
+	epc->base = base;
+	epc->size = size;
+
+	ret = x86_set_memory_region(kvm, SGX_EPC_PRIVATE_MEMSLOT, base, size);
+	if (ret) {
+		kfree(epc);
+		return ret;
+	}
+
+	ret = vmx_setup_epc(epc);
+	if (ret) {
+		x86_set_memory_region(kvm, SGX_EPC_PRIVATE_MEMSLOT, 0, 0);
+		kfree(epc);
+		return ret;
+	}
+
+	kvm_vmx->epc = epc;
+
+	slot = id_to_memslot(kvm_memslots(kvm), SGX_EPC_PRIVATE_MEMSLOT);
+	vma = find_vma_intersection(kvm->mm, slot->userspace_addr,
+				    slot->userspace_addr + 1);
+
+	vma->vm_flags |= VM_PFNMAP | VM_IO | VM_DONTEXPAND | VM_DONTDUMP |
+			 VM_DONTCOPY;
+	vma->vm_ops = &vmx_epc_vm_ops;
+	vma->vm_private_data = (void *)epc;
+
+	return 0;
+}
+
+static void vmx_epc_destroy(struct kvm *kvm)
+{
+	struct kvm_vmx *kvm_vmx = to_kvm_vmx(kvm);
+	struct vmx_epc *epc = to_vmx_epc(kvm);
+	struct sgx_epc_page *epc_page, *tmp;
+	struct radix_tree_iter iter;
+	struct vmx_epc_page *page;
+	void **slot;
+
+	LIST_HEAD(secs_pages);
+
+	if (!epc)
+		return;
+
+	list_for_each_entry_safe(epc_page, tmp, &epc->cache, list) {
+		list_del(&epc_page->list);
+		sgx_free_page(epc_page);
+	}
+
+	radix_tree_for_each_slot(slot, &epc->page_tree, &iter, 0) {
+		page = *slot;
+		if (page->epc_page) {
+			epc_page = page->epc_page;
+			if (__sgx_free_page(epc_page))
+				list_add(&epc_page->list, &secs_pages);
+		}
+		kfree(page);
+
+		radix_tree_delete(&epc->page_tree, iter.index);
+	}
+
+	/*
+	 * Because we don't track which pages are SECS pages, it's
+	 * possible for EREMOVE to fail, e.g. a SECS page can have
+	 * children if the VM shutdown unexpectedly.  Retry all
+	 * failed pages after iterating through the entire list,
+	 * at which point all children should be removed and the
+	 * SECS pages can be nuked as well.
+	 */
+	list_for_each_entry_safe(epc_page, tmp, &secs_pages, list) {
+		list_del(&epc_page->list);
+		sgx_free_page(epc_page);
+	}
+
+	kvm_vmx->epc = NULL;
+
+	kfree(epc);
+}
+
+#endif /* CONFIG_INTEL_SGX_CORE */
 
 /*
  * Keep MSR_STAR at the end, as setup_msrs() will try to optimize it
@@ -7835,6 +8082,11 @@ static __init int hardware_setup(void)
 
 	kvm_mce_cap_supported |= MCG_LMCE_P;
 
+#ifdef CONFIG_INTEL_SGX_CORE
+	/* SGX virtualization is not yet supported */
+	kvm_x86_ops->set_sgx_epc = NULL;
+#endif
+
 	return alloc_kvm_area();
 
 out:
@@ -10764,6 +11016,13 @@ static void __init vmx_check_processor_compat(void *rtn)
 	}
 }
 
+static void vmx_vm_destroy(struct kvm *kvm)
+{
+#ifdef CONFIG_INTEL_SGX_CORE
+	vmx_epc_destroy(kvm);
+#endif
+}
+
 static u64 vmx_get_mt_mask(struct kvm_vcpu *vcpu, gfn_t gfn, bool is_mmio)
 {
 	u8 cache;
@@ -13495,6 +13754,7 @@ static struct kvm_x86_ops vmx_x86_ops __ro_after_init = {
 	.vm_init = vmx_vm_init,
 	.vm_alloc = vmx_vm_alloc,
 	.vm_free = vmx_vm_free,
+	.vm_destroy = vmx_vm_destroy,
 
 	.vcpu_create = vmx_create_vcpu,
 	.vcpu_free = vmx_free_vcpu,
@@ -13620,6 +13880,10 @@ static struct kvm_x86_ops vmx_x86_ops __ro_after_init = {
 	.pre_enter_smm = vmx_pre_enter_smm,
 	.pre_leave_smm = vmx_pre_leave_smm,
 	.enable_smi_window = enable_smi_window,
+
+#ifdef CONFIG_INTEL_SGX_CORE
+	.set_sgx_epc = vmx_set_sgx_epc,
+#endif
 };
 
 static void vmx_cleanup_l1d_flush(void)
