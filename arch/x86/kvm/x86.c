@@ -2969,6 +2969,9 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_X2APIC_API:
 		r = KVM_X2APIC_API_VALID_FLAGS;
 		break;
+	case KVM_CAP_X86_SGX_EPC:
+		r = !!kvm_x86_ops->set_sgx_epc;
+		break;
 	default:
 		break;
 	}
@@ -4598,6 +4601,23 @@ set_identity_unlock:
 		if (copy_from_user(&hvevfd, argp, sizeof(hvevfd)))
 			goto out;
 		r = kvm_vm_ioctl_hv_eventfd(kvm, &hvevfd);
+		break;
+	}
+	case KVM_X86_SET_SGX_EPC: {
+		struct kvm_x86_sgx_epc epc;
+
+		r = -EFAULT;
+		if (copy_from_user(&epc, argp, sizeof(epc)))
+			break;
+
+		mutex_lock(&kvm->lock);
+		if (!kvm_x86_ops->set_sgx_epc)
+			r = -ENXIO;
+		else if (kvm->created_vcpus)
+			r = -EEXIST;
+		else
+			r = kvm_x86_ops->set_sgx_epc(kvm, epc.base, epc.size);
+		mutex_unlock(&kvm->lock);
 		break;
 	}
 	default:

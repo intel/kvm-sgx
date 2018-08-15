@@ -378,4 +378,9 @@ struct kvm_sync_regs {
 #define KVM_X86_QUIRK_LINT0_REENABLED	(1 << 0)
 #define KVM_X86_QUIRK_CD_NW_CLEARED	(1 << 1)
 
+struct kvm_x86_sgx_epc {
+	__u64 base;
+	__u64 size;
+};
+
 #endif /* _ASM_X86_KVM_H */

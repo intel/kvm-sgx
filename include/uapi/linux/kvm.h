@@ -949,6 +949,7 @@ struct kvm_ppc_resize_hpt {
 #define KVM_CAP_GET_MSR_FEATURES 153
 #define KVM_CAP_HYPERV_EVENTFD 154
 #define KVM_CAP_HYPERV_TLBFLUSH 155
+#define KVM_CAP_X86_SGX_EPC 200
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
@@ -1391,6 +1392,8 @@ struct kvm_enc_region {
 /* Available with KVM_CAP_HYPERV_EVENTFD */
 #define KVM_HYPERV_EVENTFD        _IOW(KVMIO,  0xbd, struct kvm_hyperv_eventfd)
 
+/* ioctl for VM fds, available with KVM_CAP_X86_SGX_EPC */
+#define KVM_X86_SET_SGX_EPC	_IOW(KVMIO, 0xdd, struct kvm_x86_sgx_epc)
 
 /* Secure Encrypted Virtualization command */
 enum sev_cmd_id {
