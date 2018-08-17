@@ -1035,7 +1035,7 @@ int sgx_encl_load_page(struct sgx_encl_page *encl_page,
 	ret = __eldu(&pginfo, sgx_epc_addr(epc_page), va_ptr);
 	if (ret) {
 		sgx_err(encl, "ELDU returned %d\n", ret);
-		ret = ENCLS_TO_ERR(ret);
+		ret = encls_to_err(ret);
 	}
 
 	kunmap_atomic((void *)(unsigned long)(pginfo.metadata - pcmd_offset));
