@@ -131,6 +131,12 @@ static unsigned long sgx_calc_free_cnt(void)
 	return free_cnt;
 }
 
+static bool sgx_should_reclaim(void)
+{
+	return sgx_calc_free_cnt() < SGX_NR_HIGH_PAGES &&
+	       !list_empty(&sgx_active_page_list);
+}
+
 static int ksgxswapd(void *p)
 {
 	set_freezable();
@@ -140,10 +146,12 @@ static int ksgxswapd(void *p)
 			continue;
 
 		wait_event_freezable(ksgxswapd_waitq, kthread_should_stop() ||
-				     sgx_calc_free_cnt() < SGX_NR_HIGH_PAGES);
+						      sgx_should_reclaim());
 
-		if (sgx_calc_free_cnt() < SGX_NR_HIGH_PAGES)
+		if (sgx_should_reclaim())
 			sgx_reclaim_pages();
+
+		cond_resched();
 	}
 
 	return 0;
