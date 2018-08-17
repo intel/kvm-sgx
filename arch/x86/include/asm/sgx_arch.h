@@ -11,6 +11,7 @@
 #define _ASM_X86_SGX_ARCH_H
 
 #include <linux/types.h>
+#include <uapi/asm/sgx_errno.h>
 
 #define SGX_CPUID 0x12
 
