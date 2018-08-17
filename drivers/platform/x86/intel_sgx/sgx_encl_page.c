@@ -154,7 +154,7 @@ static void sgx_write_page(struct sgx_epc_page *epc_page, bool do_free)
 					      va_offset);
 			}
 		}
-		SGX_INVD(ret, encl, "EWB returned %d\n", ret);
+		SGX_INVD(ret, encl, "EWB returned %d (0x%x)", ret, ret);
 
 		SGX_INVD(encl_page->desc & SGX_ENCL_PAGE_VA_OFFSET_MASK, encl,
 			"Flags set in VA offset area: %lx", encl_page->desc);

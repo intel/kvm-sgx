@@ -286,7 +286,7 @@ void sgx_free_page(struct sgx_epc_page *page)
 
 	ret = __sgx_free_page(page);
 	WARN(ret < 0, "sgx: cannot free page, reclaim in-progress");
-	WARN(ret > 0, "sgx: EREMOVE returned %d\n", ret);
+	WARN(ret > 0, "sgx: EREMOVE returned %d (0x%x)", ret, ret);
 }
 EXPORT_SYMBOL_GPL(sgx_free_page);
 
