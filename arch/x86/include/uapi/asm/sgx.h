@@ -20,31 +20,6 @@
 #define SGX_IOC_ENCLAVE_MODIFY_PAGES \
 	_IOW(SGX_MAGIC, 0x04, struct sgx_enclave_modify_pages)
 
-/* SGX leaf instruction return values */
-#define SGX_SUCCESS			0
-#define SGX_INVALID_SIG_STRUCT		1
-#define SGX_INVALID_ATTRIBUTE		2
-#define SGX_BLKSTATE			3
-#define SGX_INVALID_MEASUREMENT		4
-#define SGX_NOTBLOCKABLE		5
-#define SGX_PG_INVLD			6
-#define SGX_LOCKFAIL			7
-#define SGX_INVALID_SIGNATURE		8
-#define SGX_MAC_COMPARE_FAIL		9
-#define SGX_PAGE_NOT_BLOCKED		10
-#define SGX_NOT_TRACKED			11
-#define SGX_VA_SLOT_OCCUPIED		12
-#define SGX_CHILD_PRESENT		13
-#define SGX_ENCLAVE_ACT			14
-#define SGX_ENTRYEPOCH_LOCKED		15
-#define SGX_INVALID_EINITTOKEN		16
-#define SGX_PREV_TRK_INCMPL		17
-#define SGX_PG_IS_SECS			18
-#define SGX_INVALID_CPUSVN		32
-#define SGX_INVALID_ISVSVN		64
-#define SGX_UNMASKED_EVENT		128
-#define SGX_INVALID_KEYNAME		256
-
 /* IOCTL return values */
 #define SGX_POWER_LOST_ENCLAVE		0x40000000
 
