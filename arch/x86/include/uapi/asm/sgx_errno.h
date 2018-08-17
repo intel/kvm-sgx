@@ -38,6 +38,16 @@
  *				tracking sequence.
  * %SGX_PG_IS_SECS:		Target EPC page is an SECS and cannot be
  *				blocked.
+ * %SGX_PAGE_ATTRIBUTES_MISMATCH:	Attributes of the EPC page do not match
+ *					the expected values.
+ * %SGX_PAGE_NOT_MODIFIABLE:	EPC page cannot be modified because it is in
+ *				the PENDING or MODIFIED state.
+ * %SGX_PAGE_NOT_DEBUGGABLE:	EPC page cannot be modified because it is in
+ *				the PENDING or MODIFIED state.
+ * %SGX_INVALID_COUNTER:	{In,De}crementing a counter would cause it to
+ *				{over,under}flow.
+ * %SGX_PG_NONEPC:		Target page is not an EPC page.
+ * %SGX_TRACK_NOT_REQUIRED:	Target page type does not require tracking.
  * %SGX_INVALID_CPUSVN:		Security version number reported by CPU is less
  *				than what is required by the enclave.
  * %SGX_INVALID_ISVSVN:		Security version number of enclave is less than
@@ -66,6 +76,12 @@ enum sgx_return_codes {
 	SGX_INVALID_EINITTOKEN		= 16,
 	SGX_PREV_TRK_INCMPL		= 17,
 	SGX_PG_IS_SECS			= 18,
+	SGX_PAGE_ATTRIBUTES_MISMATCH	= 19,
+	SGX_PAGE_NOT_MODIFIABLE		= 20,
+	SGX_PAGE_NOT_DEBUGGABLE		= 21,
+	SGX_INVALID_COUNTER		= 25,
+	SGX_PG_NONEPC			= 26,
+	SGX_TRACK_NOT_REQUIRED		= 27,
 	SGX_INVALID_CPUSVN		= 32,
 	SGX_INVALID_ISVSVN		= 64,
 	SGX_UNMASKED_EVENT		= 128,
