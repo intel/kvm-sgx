@@ -866,7 +866,8 @@ static int sgx_encl_mod(struct sgx_encl_page *encl_page,
 		ret = __emodpr(secinfo, sgx_epc_addr(encl_page->epc_page));
 	else
 		ret = __emodt(secinfo, sgx_epc_addr(encl_page->epc_page));
-	SGX_INVD(ret, encl, "EMOD%s returned %d\n", perm ? "PR" : "T", ret);
+	SGX_INVD(ret, encl, "EMOD%s returned %d (0x%x)",
+		 perm ? "PR" : "T", ret, ret);
 	return ret;
 }
 
@@ -963,7 +964,7 @@ void sgx_encl_block(struct sgx_encl_page *encl_page)
 
 	zap_vma_ptes(vma, addr, PAGE_SIZE);
 	ret = __eblock(sgx_epc_addr(encl_page->epc_page));
-	SGX_INVD(ret, encl, "EBLOCK returned %d\n", ret);
+	SGX_INVD(ret, encl, "EBLOCK returned %d (0x%x)", ret, ret);
 }
 
 /**
@@ -983,7 +984,7 @@ void sgx_encl_track(struct sgx_encl *encl)
 {
 	int ret = __etrack(sgx_epc_addr(encl->secs.epc_page));
 
-	SGX_INVD(ret, encl, "ETRACK returned %d\n", ret);
+	SGX_INVD(ret, encl, "ETRACK returned %d (0x%x)", ret, ret);
 }
 
 /**
