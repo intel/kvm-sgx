@@ -66,7 +66,7 @@ static int sgx_edbgrd(struct sgx_encl *encl, struct sgx_encl_page *page,
 	ret = __edbgrd(sgx_epc_addr(page->epc_page) + offset, data);
 	if (ret) {
 		sgx_dbg(encl, "EDBGRD returned %d\n", ret);
-		return ENCLS_TO_ERR(ret);
+		return encls_to_err(ret);
 	}
 
 	return 0;
@@ -88,7 +88,7 @@ static int sgx_edbgwr(struct sgx_encl *encl, struct sgx_encl_page *page,
 	ret = __edbgwr(sgx_epc_addr(page->epc_page) + offset, data);
 	if (ret) {
 		sgx_dbg(encl, "EDBGWR returned %d\n", ret);
-		return ENCLS_TO_ERR(ret);
+		return encls_to_err(ret);
 	}
 
 	return 0;

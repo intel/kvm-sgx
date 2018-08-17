@@ -121,15 +121,48 @@ int sgx_einit(struct sgx_sigstruct *sigstruct, struct sgx_einittoken *token,
 #define IS_ENCLS_FAULT(r) ((r) & 0xffff0000)
 #define ENCLS_FAULT_VECTOR(r) ((r) >> 16)
 
-/*
- * Translate an ENCLS fault or SGX error code into a kernel error code.
- * Primarily used by functions that cannot return a non-negative error
- * code, e.g. kernel callbacks.
+/**
+ * encls_to_err - translate an ENCLS fault or SGX code into a system error code
+ * @ret:	positive value return code
+ *
+ * Returns:
+ *	-EFAULT for faults
+ *	-EINTR for unmasked events
+ *	-EINVAL for SGX_INVALID_* error codes
+ *	-EBUSY for non-fatal resource contention errors
+ *	-EIO for all other errors
+ *
+ * Translate a postive return code, e.g. from ENCLS, into a system error
+ * code.  Primarily used by functions that cannot return a non-negative
+ * error code, e.g. kernel callbacks.
  */
-#define ENCLS_TO_ERR(r) (IS_ENCLS_FAULT(r) ? -EFAULT :		\
-			(r) == SGX_UNMASKED_EVENT ? -EINTR :	\
-			(r) == SGX_MAC_COMPARE_FAIL ? -EIO :	\
-			(r) == SGX_ENTRYEPOCH_LOCKED ? -EBUSY : -EPERM)
+static inline int encls_to_err(int ret)
+{
+	if (IS_ENCLS_FAULT(ret))
+		return -EFAULT;
+
+	switch (ret) {
+	case SGX_UNMASKED_EVENT:
+		return -EINTR;
+	case SGX_INVALID_SIG_STRUCT:
+	case SGX_INVALID_ATTRIBUTE:
+	case SGX_INVALID_MEASUREMENT:
+	case SGX_INVALID_EINITTOKEN:
+	case SGX_INVALID_CPUSVN:
+	case SGX_INVALID_ISVSVN:
+	case SGX_INVALID_KEYNAME:
+		return -EINVAL;
+	case SGX_ENCLAVE_ACT:
+	case SGX_CHILD_PRESENT:
+	case SGX_ENTRYEPOCH_LOCKED:
+	case SGX_PREV_TRK_INCMPL:
+	case SGX_PAGE_NOT_MODIFIABLE:
+	case SGX_PAGE_NOT_DEBUGGABLE:
+		return -EBUSY;
+	default:
+		return -EIO;
+	};
+}
 
 /*
  * __encls_ret_N encodes ENCLS leafs that return an error code in EAX,
