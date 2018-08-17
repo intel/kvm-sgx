@@ -111,15 +111,53 @@ void sgx_put_backing(struct page *backing_page, bool write);
 int sgx_einit(struct sgx_sigstruct *sigstruct, struct sgx_einittoken *token,
 	      struct sgx_epc_page *secs_page, u64 le_pubkey_hash[4]);
 
-/*
+/**
+ * ENCLS_FAULT_FLAG - flag signifying an ENCLS return code is a trapnr
+ *
  * ENCLS has its own (positive value) error codes and also generates
- * ENCLS specific #GP and #PF faults.  On a fault, __encls{,_ret}_N
- * shift the vector into bits 31:16 so that the caller can identify
- * the fault vector (as opposed to the a generic -EFAULT) without
- * causing collisions between faults and SGX error codes.
+ * ENCLS specific #GP and #PF faults.  And the ENCLS values get munged
+ * with system error codes as everything percolates back up the stack.
+ * Unfortunately (for us), we need to precisely identify each unique
+ * error code, e.g. the action taken if EWB fails varies based on the
+ * type of fault and on the exact SGX error code, i.e. we can't simply
+ * convert all faults to -EFAULT.
+ *
+ * To make all three error types coexist, we set bit 30 to identify an
+ * ENCLS fault.  Bit 31 (technically bits N:31) is used to differentiate
+ * between positive (faults and SGX error codes) and negative (system
+ * error codes) values.
  */
-#define IS_ENCLS_FAULT(r) ((r) & 0xffff0000)
-#define ENCLS_FAULT_VECTOR(r) ((r) >> 16)
+#define ENCLS_FAULT_FLAG 0x40000000UL
+#define ENCLS_FAULT_FLAG_ASM "$0x40000000"
+
+/**
+ * IS_ENCLS_FAULT - check if a return code indicates an ENCLS fault
+ *
+ * Check for a fault by looking for a postive value with the fault
+ * flag set.  The postive value check is needed to filter out system
+ * error codes since negative values will have all higher order bits
+ * set, including ENCLS_FAULT_FLAG.
+ */
+#define IS_ENCLS_FAULT(r) ((int)(r) > 0 && ((r) & ENCLS_FAULT_FLAG))
+
+/**
+ * ENCLS_TRAPNR - retrieve the trapnr exactly as passed via _ASM_EXTABLE_FAULT
+ *
+ * Retrieve the encoded trapnr from the specified return code, keeping
+ * any error code bits that were included in trapnr when it was supplied
+ * to the _ASM_EXTABLE_FAULT handler, e.g. X86_PF_SGX is propagated from
+ * the error code to trapnr.
+ */
+#define ENCLS_TRAPNR(r) ((r) & ~ENCLS_FAULT_FLAG)
+
+/**
+ * ENCLS_FAULT_VECTOR - retrieve the fault vector from a return code
+ *
+ * Retrieve the encoded fault vector, e.g. #GP or #PF, from the specified
+ * return code, dropping any potential error code bits in trapnr, e.g.
+ * X86_PF_SGX.
+ */
+#define ENCLS_FAULT_VECTOR(r) (ENCLS_TRAPNR(r) & 0x1f)
 
 /**
  * encls_to_err - translate an ENCLS fault or SGX code into a system error code
@@ -164,14 +202,19 @@ static inline int encls_to_err(int ret)
 	};
 }
 
-/*
- * __encls_ret_N encodes ENCLS leafs that return an error code in EAX,
- * e.g. EREMOVE.  And because SGX isn't complex enough as it is, leafs
- * that return an error code also modify flags.
+/**
+ * __encls_ret_N - encode an ENCLS leaf that returns an error code in EAX
+ * @rax:	leaf number
+ * @inputs:	asm inputs for the leaf
  *
- * @ret - 0 on success, SGX error code on failure, fault vector shifted
- *        into bits 31:16 on a fault (to avoid collisions with the SGX
- *        error codes).
+ * Returns:
+ *	0 on success
+ *	SGX error code on failure
+ *	trapnr with ENCLS_FAULT_FLAG set on fault
+ *
+ * Emit assembly for an ENCLS leaf that returns an error code, e.g. EREMOVE.
+ * And because SGX isn't complex enough as it is, leafs that return an error
+ * code also modify flags.
  */
 #define __encls_ret_N(rax, inputs...)			\
 	({						\
@@ -180,7 +223,7 @@ static inline int encls_to_err(int ret)
 	"1: .byte 0x0f, 0x01, 0xcf;\n\t"		\
 	"2:\n"						\
 	".section .fixup,\"ax\"\n"			\
-	"3: shll $16,%%eax\n"				\
+	"3: orl "ENCLS_FAULT_FLAG_ASM",%%eax\n"		\
 	"   jmp 2b\n"					\
 	".previous\n"					\
 	_ASM_EXTABLE_FAULT(1b, 3b)			\
@@ -205,14 +248,20 @@ static inline int encls_to_err(int ret)
 	__encls_ret_N(rax, "b"(rbx), "c"(rcx), "d"(rdx));	\
 	})
 
-/*
- * __encls_N encodes ENCLS leafs that do not return an error code in EAX,
- * e.g. ECREATE.  Leaves without error codes either succeed or fault.
- * rbx_out is an optional parameter for use by EDGBRD, which returns the
- * the requested value in RBX.
+/**
+ * __encls_N - encode an ENCLS leaf that doesn't return an error code
+ * @rax:	leaf number
+ * @rbx_out:	optional output variable
+ * @inputs:	asm inputs for the leaf
  *
- * @ret - 0 on success, fault vector shifted into bits 31:16 on a fault
- *        (to be compatible with __encls_ret_N).
+ * Returns:
+ *	0 on success
+ *	trapnr with ENCLS_FAULT_FLAG set on fault
+ *
+ * Emit assembly for an ENCLS leaf that does not return an error code,
+ * e.g. ECREATE.  Leaves without error codes either succeed or fault.
+ * @rbx_out is an optional parameter for use by EDGBRD, which returns
+ * the the requested value in RBX.
  */
 #define __encls_N(rax, rbx_out, inputs...)		\
 	({						\
@@ -222,10 +271,10 @@ static inline int encls_to_err(int ret)
 	"   xor %%eax,%%eax;\n"				\
 	"2:\n"						\
 	".section .fixup,\"ax\"\n"			\
-	"3: shll $16,%%eax\n"				\
+	"3: orl "ENCLS_FAULT_FLAG_ASM",%%eax\n"		\
 	"   jmp 2b\n"					\
 	".previous\n"					\
-	_ASM_EXTABLE_FAULT(1b, 3b)				\
+	_ASM_EXTABLE_FAULT(1b, 3b)			\
 	: "=a"(ret), "=b"(rbx_out)			\
 	: "a"(rax), inputs				\
 	: "memory");					\
