@@ -693,6 +693,16 @@ int kvm_gfn_to_hva_cache_init(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 int kvm_clear_guest_page(struct kvm *kvm, gfn_t gfn, int offset, int len);
 int kvm_clear_guest(struct kvm *kvm, gpa_t gpa, unsigned long len);
 struct kvm_memory_slot *gfn_to_memslot(struct kvm *kvm, gfn_t gfn);
+
+static inline bool kvm_is_visible_memslot(struct kvm_memory_slot *memslot)
+{
+	if (!memslot || memslot->id >= KVM_USER_MEM_SLOTS ||
+	    memslot->flags & KVM_MEMSLOT_INVALID)
+		return false;
+
+	return true;
+}
+
 bool kvm_is_visible_gfn(struct kvm *kvm, gfn_t gfn);
 unsigned long kvm_host_page_size(struct kvm *kvm, gfn_t gfn);
 void mark_page_dirty(struct kvm *kvm, gfn_t gfn);
