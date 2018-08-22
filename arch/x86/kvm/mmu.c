@@ -3810,9 +3810,12 @@ static bool try_async_pf(struct kvm_vcpu *vcpu, bool prefault, gfn_t gfn,
 	slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
 
 	/*
-	 * Don't expose private memslots to L2.
+	 * Don't expose private memslots to L2.  The SGX EPC memslot is an
+	 * exception as it's only private from the standpoint that it's not
+	 * exposed to userspace.
 	 */
-	if (is_guest_mode(vcpu) && !kvm_is_visible_memslot(slot)) {
+	if (is_guest_mode(vcpu) && !kvm_is_visible_memslot(slot) &&
+	    (!slot || slot->id != SGX_EPC_PRIVATE_MEMSLOT)) {
 		*pfn = KVM_PFN_NOSLOT;
 		return false;
 	}
