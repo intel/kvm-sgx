@@ -236,7 +236,7 @@ struct sgx_epc_page *sgx_alloc_va_page(unsigned int flags)
 
 	ret = __epa(sgx_epc_addr(epc_page));
 	if (ret) {
-		pr_crit("EPA failed\n");
+		WARN_ONCE(1, "sgx: EPA returned %d (0x%x)", ret, ret);
 		sgx_free_page(epc_page);
 		return ERR_PTR(encls_to_err(ret));
 	}
