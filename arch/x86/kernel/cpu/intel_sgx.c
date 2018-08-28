@@ -204,6 +204,9 @@ struct sgx_epc_page *sgx_alloc_page(struct sgx_epc_page_impl *impl,
 {
 	struct sgx_epc_page *entry;
 
+	if (WARN_ON_ONCE(!impl))
+		return ERR_PTR(-EFAULT);
+
 	for ( ; ; ) {
 		entry = sgx_try_alloc_page(impl);
 		if (entry)
