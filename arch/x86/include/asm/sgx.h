@@ -31,7 +31,7 @@ struct sgx_epc_page;
 struct sgx_epc_page_ops {
 	bool (*get)(struct sgx_epc_page *epc_page);
 	void (*put)(struct sgx_epc_page *epc_page);
-	bool (*reclaim)(struct sgx_epc_page *epc_page);
+	bool (*reclaim)(struct sgx_epc_page *epc_page, bool ignore_age);
 	void (*block)(struct sgx_epc_page *epc_page);
 	void (*write)(struct sgx_epc_page *epc_page);
 };

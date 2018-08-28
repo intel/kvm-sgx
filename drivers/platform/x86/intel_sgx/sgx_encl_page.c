@@ -31,7 +31,8 @@ static void sgx_encl_page_put(struct sgx_epc_page *epc_page)
 	kref_put(&encl->refcount, sgx_encl_release);
 }
 
-static bool sgx_encl_page_reclaim(struct sgx_epc_page *epc_page)
+static bool sgx_encl_page_reclaim(struct sgx_epc_page *epc_page,
+				  bool ignore_age)
 {
 	struct sgx_encl_page *encl_page = to_encl_page(epc_page);
 	struct sgx_encl *encl = encl_page->encl;
@@ -52,7 +53,7 @@ static bool sgx_encl_page_reclaim(struct sgx_epc_page *epc_page)
 	else if (encl_page->desc & SGX_ENCL_PAGE_RESERVED)
 		ret = false;
 	else
-		ret = !sgx_test_and_clear_young(encl_page);
+		ret = ignore_age || !sgx_test_and_clear_young(encl_page);
 	if (ret)
 		encl_page->desc |= SGX_ENCL_PAGE_RECLAIMED;
 	mutex_unlock(&encl->lock);
