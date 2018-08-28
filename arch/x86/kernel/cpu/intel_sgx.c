@@ -229,6 +229,12 @@ struct sgx_epc_page *sgx_alloc_page(struct sgx_epc_page_impl *impl,
 	if (sgx_calc_free_cnt() < SGX_NR_LOW_PAGES)
 		wake_up(&ksgxswapd_waitq);
 
+	if (!IS_ERR(entry)) {
+		spin_lock(&sgx_global_lru.lock);
+		list_add_tail(&entry->list, &sgx_global_lru.unreclaimable);
+		spin_unlock(&sgx_global_lru.lock);
+	}
+
 	return entry;
 }
 EXPORT_SYMBOL_GPL(sgx_alloc_page);
@@ -251,21 +257,23 @@ int __sgx_free_page(struct sgx_epc_page *page)
 	int ret;
 
 	/*
-	 * Remove the page from the active list if necessary.  If the page
+	 * The page may have already been remove from the LRUs, in which
+	 * case we can skip taking the LRU lock.  That is, unless the page
 	 * is actively being reclaimed, i.e. RECLAIMABLE is set but the
-	 * page isn't on the active list, return -EBUSY as we can't free
-	 * the page at this time since it is "owned" by the reclaimer.
+	 * page isn't on a list, in which case return -EBUSY as we can't
+	 * free the page at this time since it's "owned" by the reclaimer.
 	 */
-	if (page->desc & SGX_EPC_PAGE_RECLAIMABLE) {
+	if (!list_empty(&page->list) || page->desc & SGX_EPC_PAGE_RECLAIMABLE) {
 		spin_lock(&sgx_global_lru.lock);
 		if (page->desc & SGX_EPC_PAGE_RECLAIMABLE) {
 			if (list_empty(&page->list)) {
 				spin_unlock(&sgx_global_lru.lock);
 				return -EBUSY;
 			}
-			list_del(&page->list);
 			page->desc &= ~SGX_EPC_PAGE_RECLAIMABLE;
 		}
+		if (!list_empty(&page->list))
+			list_del_init(&page->list);
 		spin_unlock(&sgx_global_lru.lock);
 	}
 
@@ -313,7 +321,7 @@ void sgx_page_reclaimable(struct sgx_epc_page *page)
 {
 	spin_lock(&sgx_global_lru.lock);
 	page->desc |= SGX_EPC_PAGE_RECLAIMABLE;
-	list_add_tail(&page->list, &sgx_global_lru.reclaimable);
+	list_move_tail(&page->list, &sgx_global_lru.reclaimable);
 	spin_unlock(&sgx_global_lru.lock);
 }
 EXPORT_SYMBOL_GPL(sgx_page_reclaimable);
