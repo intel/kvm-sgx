@@ -85,7 +85,7 @@ int sgx_reclaim_pages(void)
 		goto out;
 
 	list_for_each_entry_safe(epc_page, tmp, &iso, list) {
-		if (epc_page->impl->ops->reclaim(epc_page))
+		if (epc_page->impl->ops->reclaim(epc_page, false))
 			continue;
 
 		epc_page->impl->ops->put(epc_page);
