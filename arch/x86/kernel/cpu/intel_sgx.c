@@ -35,8 +35,7 @@ EXPORT_SYMBOL_GPL(sgx_lc_enabled);
 struct sgx_epc_bank sgx_epc_banks[SGX_MAX_EPC_BANKS];
 EXPORT_SYMBOL_GPL(sgx_epc_banks);
 
-static LIST_HEAD(sgx_active_page_list);
-static DEFINE_SPINLOCK(sgx_active_page_list_lock);
+static struct sgx_epc_lru sgx_global_lru;
 
 static int sgx_nr_epc_banks;
 static struct task_struct *ksgxswapd_tsk;
@@ -62,12 +61,12 @@ void sgx_reclaim_pages(void)
 	struct sgx_epc_bank *bank;
 	int i, j;
 
-	spin_lock(&sgx_active_page_list_lock);
+	spin_lock(&sgx_global_lru.lock);
 	for (i = 0, j = 0; i < SGX_NR_TO_SCAN; i++) {
-		if (list_empty(&sgx_active_page_list))
+		if (list_empty(&sgx_global_lru.reclaimable))
 			break;
 
-		epc_page = list_first_entry(&sgx_active_page_list,
+		epc_page = list_first_entry(&sgx_global_lru.reclaimable,
 					    struct sgx_epc_page, list);
 		list_del_init(&epc_page->list);
 
@@ -76,7 +75,7 @@ void sgx_reclaim_pages(void)
 		else
 			epc_page->desc &= ~SGX_EPC_PAGE_RECLAIMABLE;
 	}
-	spin_unlock(&sgx_active_page_list_lock);
+	spin_unlock(&sgx_global_lru.lock);
 
 	for (i = 0; i < j; i++) {
 		epc_page = chunk[i];
@@ -85,9 +84,9 @@ void sgx_reclaim_pages(void)
 
 		epc_page->impl->ops->put(epc_page);
 
-		spin_lock(&sgx_active_page_list_lock);
-		list_add_tail(&epc_page->list, &sgx_active_page_list);
-		spin_unlock(&sgx_active_page_list_lock);
+		spin_lock(&sgx_global_lru.lock);
+		list_add_tail(&epc_page->list, &sgx_global_lru.reclaimable);
+		spin_unlock(&sgx_global_lru.lock);
 
 		chunk[i] = NULL;
 	}
@@ -137,7 +136,7 @@ static unsigned long sgx_calc_free_cnt(void)
 static bool sgx_should_reclaim(void)
 {
 	return sgx_calc_free_cnt() < SGX_NR_HIGH_PAGES &&
-	       !list_empty(&sgx_active_page_list);
+	       !list_empty(&sgx_global_lru.reclaimable);
 }
 
 static int ksgxswapd(void *p)
@@ -210,7 +209,7 @@ struct sgx_epc_page *sgx_alloc_page(struct sgx_epc_page_impl *impl,
 		if (entry)
 			break;
 
-		if (list_empty(&sgx_active_page_list))
+		if (list_empty(&sgx_global_lru.reclaimable))
 			return ERR_PTR(-ENOMEM);
 
 		if (flags & SGX_ALLOC_ATOMIC) {
@@ -258,16 +257,16 @@ int __sgx_free_page(struct sgx_epc_page *page)
 	 * the page at this time since it is "owned" by the reclaimer.
 	 */
 	if (page->desc & SGX_EPC_PAGE_RECLAIMABLE) {
-		spin_lock(&sgx_active_page_list_lock);
+		spin_lock(&sgx_global_lru.lock);
 		if (page->desc & SGX_EPC_PAGE_RECLAIMABLE) {
 			if (list_empty(&page->list)) {
-				spin_unlock(&sgx_active_page_list_lock);
+				spin_unlock(&sgx_global_lru.lock);
 				return -EBUSY;
 			}
 			list_del(&page->list);
 			page->desc &= ~SGX_EPC_PAGE_RECLAIMABLE;
 		}
-		spin_unlock(&sgx_active_page_list_lock);
+		spin_unlock(&sgx_global_lru.lock);
 	}
 
 	ret = __eremove(sgx_epc_addr(page));
@@ -312,10 +311,10 @@ EXPORT_SYMBOL_GPL(sgx_free_page);
  */
 void sgx_page_reclaimable(struct sgx_epc_page *page)
 {
-	spin_lock(&sgx_active_page_list_lock);
+	spin_lock(&sgx_global_lru.lock);
 	page->desc |= SGX_EPC_PAGE_RECLAIMABLE;
-	list_add_tail(&page->list, &sgx_active_page_list);
-	spin_unlock(&sgx_active_page_list_lock);
+	list_add_tail(&page->list, &sgx_global_lru.reclaimable);
+	spin_unlock(&sgx_global_lru.lock);
 }
 EXPORT_SYMBOL_GPL(sgx_page_reclaimable);
 
@@ -504,6 +503,8 @@ static __init int sgx_init(void)
 		return PTR_ERR(tsk);
 	}
 	ksgxswapd_tsk = tsk;
+
+	sgx_lru_init(&sgx_global_lru);
 
 	sgx_enabled = true;
 	sgx_lc_enabled = !!(fc & FEATURE_CONTROL_SGX_LE_WR);
