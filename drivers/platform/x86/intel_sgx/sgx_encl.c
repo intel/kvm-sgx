@@ -400,7 +400,7 @@ static int sgx_encl_grow(struct sgx_encl *encl)
 		va_page = kzalloc(sizeof(*va_page), GFP_KERNEL);
 		if (!va_page)
 			return -ENOMEM;
-		va_page->epc_page = sgx_alloc_va_page(0);
+		va_page->epc_page = sgx_alloc_va_page(encl);
 		if (IS_ERR(va_page->epc_page)) {
 			ret = PTR_ERR(va_page->epc_page);
 			kfree(va_page);
@@ -424,6 +424,13 @@ static int sgx_encl_grow(struct sgx_encl *encl)
 	mutex_unlock(&encl->lock);
 	return 0;
 }
+
+
+/*
+ * Reclamation of VA pages is not (yet) supported,
+ * i.e. all ops are unimplemented.
+ */
+const struct sgx_epc_page_ops sgx_va_page_ops;
 
 /**
  * sgx_encl_alloc - allocate memory for an enclave and set attributes
@@ -484,6 +491,7 @@ struct sgx_encl *sgx_encl_alloc(struct sgx_secs *secs)
 	encl->ssaframesize = secs->ssa_frame_size;
 	encl->backing = backing;
 	encl->pcmd = pcmd;
+	encl->va_page_impl.ops = &sgx_va_page_ops;
 
 	return encl;
 }

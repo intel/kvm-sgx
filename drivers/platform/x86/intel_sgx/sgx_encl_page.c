@@ -218,7 +218,7 @@ void sgx_set_page_reclaimable(struct sgx_encl_page *encl_page)
 
 /**
  * sgx_alloc_page - allocate a VA page
- * @flags:	allocation flags
+ * @encl:	enclave associated with the VA page
  *
  * Allocates an &sgx_epc_page instance and converts it to a VA page.
  *
@@ -226,12 +226,12 @@ void sgx_set_page_reclaimable(struct sgx_encl_page *encl_page)
  *   a &struct sgx_va_page instance,
  *   -errno otherwise
  */
-struct sgx_epc_page *sgx_alloc_va_page(unsigned int flags)
+struct sgx_epc_page *sgx_alloc_va_page(struct sgx_encl *encl)
 {
 	struct sgx_epc_page *epc_page;
 	int ret;
 
-	epc_page = sgx_alloc_page(NULL, flags);
+	epc_page = sgx_alloc_page(&encl->va_page_impl, 0);
 	if (IS_ERR(epc_page))
 		return (void *)epc_page;
 

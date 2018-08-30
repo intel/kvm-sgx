@@ -151,6 +151,13 @@ struct sgx_encl {
 	struct pid *tgid;
 	struct mmu_notifier mmu_notifier;
 	struct notifier_block pm_notifier;
+
+	/*
+	 * We don't allow arbitrary reclamation of VA pages, so we don't
+	 * need a per-page implementation, but we do need to handle EPC
+	 * OOM scenarios, which requires a way to get to the enclave.
+	 */
+	struct sgx_epc_page_impl va_page_impl;
 };
 
 extern struct workqueue_struct *sgx_add_page_wq;
@@ -233,7 +240,7 @@ extern const struct sgx_epc_page_ops sgx_encl_page_ops;
 void sgx_set_epc_page(struct sgx_encl_page *encl_page,
 		      struct sgx_epc_page *epc_page);
 void sgx_set_page_reclaimable(struct sgx_encl_page *encl_page);
-struct sgx_epc_page *sgx_alloc_va_page(unsigned int flags);
+struct sgx_epc_page *sgx_alloc_va_page(struct sgx_encl *encl);
 unsigned int sgx_alloc_va_slot(struct sgx_va_page *va_page);
 void sgx_free_va_slot(struct sgx_va_page *va_page, unsigned int offset);
 bool sgx_va_page_full(struct sgx_va_page *va_page);
