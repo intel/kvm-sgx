@@ -12,6 +12,8 @@
 #include <asm/sgx.h>
 #include <asm/sgx_pr.h>
 
+#include "intel_sgx.h"
+
 /**
  * enum sgx_swap_constants - the constants used by the swapping code
  * %SGX_NR_TO_SCAN:	the number of pages to scan in a single round
@@ -53,7 +55,7 @@ static DEFINE_PER_CPU(u64 [4], sgx_le_pubkey_hash_cache);
  * tries to swap them. Only the pages that are either being freed by the
  * consumer or actively used are skipped.
  */
-static void sgx_reclaim_pages(void)
+void sgx_reclaim_pages(void)
 {
 	struct sgx_epc_page *chunk[SGX_NR_TO_SCAN + 1];
 	struct sgx_epc_page *epc_page;
