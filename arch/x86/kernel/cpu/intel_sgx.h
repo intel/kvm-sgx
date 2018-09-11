@@ -17,6 +17,6 @@ static inline void sgx_lru_init(struct sgx_epc_lru *lru)
 	INIT_LIST_HEAD(&lru->unreclaimable);
 }
 
-void sgx_reclaim_pages(void);
+int sgx_reclaim_pages(void);
 
 #endif /* _ASM_X86_INTEL_SGX_H */
