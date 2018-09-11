@@ -270,8 +270,9 @@ static struct sgx_epc_page *sgx_try_alloc_page(struct sgx_epc_page_impl *impl)
 
 /**
  * sgx_alloc_page - Allocate an EPC page
- * @flags:	allocation flags
  * @impl:	implementation for the EPC page
+ * @mm:		mm_struct used to account the page
+ * @flags:	allocation flags
  *
  * Try to grab a page from the free EPC page list. If there is a free page
  * available, it is returned to the caller. If called with SGX_ALLOC_ATOMIC,
@@ -285,7 +286,7 @@ static struct sgx_epc_page *sgx_try_alloc_page(struct sgx_epc_page_impl *impl)
  *   -EBUSY when called with SGX_ALLOC_ATOMIC and out of free pages
  */
 struct sgx_epc_page *sgx_alloc_page(struct sgx_epc_page_impl *impl,
-				    unsigned int flags)
+				    struct mm_struct *mm, unsigned int flags)
 {
 	struct sgx_epc_page *entry;
 	struct sgx_epc_lru *lru;

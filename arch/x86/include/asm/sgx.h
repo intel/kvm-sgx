@@ -106,7 +106,7 @@ static inline void *sgx_epc_addr(struct sgx_epc_page *page)
 }
 
 struct sgx_epc_page *sgx_alloc_page(struct sgx_epc_page_impl *impl,
-				    unsigned int flags);
+				    struct mm_struct *mm, unsigned int flags);
 int __sgx_free_page(struct sgx_epc_page *page);
 void sgx_free_page(struct sgx_epc_page *page);
 void sgx_page_reclaimable(struct sgx_epc_page *page);

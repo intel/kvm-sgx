@@ -63,7 +63,8 @@ static struct sgx_epc_page *__sgx_load_faulted_page(
 	struct sgx_epc_page *epc_page;
 	int ret;
 
-	epc_page = sgx_alloc_page(&encl_page->impl, SGX_ALLOC_ATOMIC);
+	epc_page = sgx_alloc_page(&encl_page->impl, encl->mm,
+				  SGX_ALLOC_ATOMIC);
 	if (IS_ERR(epc_page))
 		return epc_page;
 	ret = sgx_encl_load_page(encl_page, epc_page);
