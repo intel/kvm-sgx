@@ -50,13 +50,15 @@ static DEFINE_PER_CPU(u64 [4], sgx_le_pubkey_hash_cache);
 /**
  * sgx_reclaim_pages - reclaim EPC pages from the consumers
  *
+ * @rc		Reclaim control, e.g. number of pages to scan
+ *
  * Return: Number of EPC pages reclaimed.
  *
- * Takes a fixed chunk of pages from the global list of consumed EPC pages and
- * tries to swap them. Only the pages that are either being freed by the
- * consumer or actively used are skipped.
+ * Scan @rc->nr_pages from the global list of reclaimable EPC pages and attempt
+ * to them.  Pages that are being freed by the consumer (get() fails) or are
+ * actively being used (reclaim() fails) are skipped.
  */
-int sgx_reclaim_pages(void)
+int sgx_reclaim_pages(struct sgx_epc_reclaim_control *rc)
 {
 	struct sgx_epc_page *epc_page, *tmp;
 	struct sgx_epc_bank *bank;
@@ -64,7 +66,7 @@ int sgx_reclaim_pages(void)
 	LIST_HEAD(iso);
 
 	spin_lock(&sgx_global_lru.lock);
-	for (i = 0; i < SGX_NR_TO_SCAN; i++) {
+	for (i = 0; i < rc->nr_pages; i++) {
 		if (list_empty(&sgx_global_lru.reclaimable))
 			break;
 
@@ -131,6 +133,14 @@ out:
 	return nr_reclaimed;
 }
 
+static inline void sgx_global_reclaim_pages(void)
+{
+	struct sgx_epc_reclaim_control rc;
+
+	sgx_epc_reclaim_control_init(&rc, SGX_NR_TO_SCAN);
+	sgx_reclaim_pages(&rc);
+}
+
 static unsigned long sgx_calc_free_cnt(void)
 {
 	struct sgx_epc_bank *bank;
@@ -163,7 +173,7 @@ static int ksgxswapd(void *p)
 						      sgx_should_reclaim());
 
 		if (sgx_should_reclaim())
-			sgx_reclaim_pages();
+			sgx_global_reclaim_pages();
 	}
 
 	return 0;
@@ -235,7 +245,7 @@ struct sgx_epc_page *sgx_alloc_page(struct sgx_epc_page_impl *impl,
 			break;
 		}
 
-		sgx_reclaim_pages();
+		sgx_global_reclaim_pages();
 	}
 
 	if (sgx_calc_free_cnt() < SGX_NR_LOW_PAGES)
