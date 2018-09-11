@@ -117,6 +117,8 @@ void sgx_reclaim_pages(void)
 			spin_unlock(&bank->lock);
 		}
 	}
+
+	cond_resched();
 }
 
 static unsigned long sgx_calc_free_cnt(void)
@@ -152,8 +154,6 @@ static int ksgxswapd(void *p)
 
 		if (sgx_should_reclaim())
 			sgx_reclaim_pages();
-
-		cond_resched();
 	}
 
 	return 0;
@@ -226,7 +226,6 @@ struct sgx_epc_page *sgx_alloc_page(struct sgx_epc_page_impl *impl,
 		}
 
 		sgx_reclaim_pages();
-		cond_resched();
 	}
 
 	if (sgx_calc_free_cnt() < SGX_NR_LOW_PAGES)
