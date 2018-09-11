@@ -226,7 +226,7 @@ struct sgx_epc_page *sgx_alloc_page(struct sgx_epc_page_impl *impl,
 		}
 
 		sgx_reclaim_pages();
-		schedule();
+		cond_resched();
 	}
 
 	if (sgx_calc_free_cnt() < SGX_NR_LOW_PAGES)
