@@ -50,15 +50,17 @@ static DEFINE_PER_CPU(u64 [4], sgx_le_pubkey_hash_cache);
 /**
  * sgx_reclaim_pages - reclaim EPC pages from the consumers
  *
+ * Return: Number of EPC pages reclaimed.
+ *
  * Takes a fixed chunk of pages from the global list of consumed EPC pages and
  * tries to swap them. Only the pages that are either being freed by the
  * consumer or actively used are skipped.
  */
-void sgx_reclaim_pages(void)
+int sgx_reclaim_pages(void)
 {
 	struct sgx_epc_page *epc_page, *tmp;
 	struct sgx_epc_bank *bank;
-	int i;
+	int i, nr_reclaimed = 0;
 	LIST_HEAD(iso);
 
 	spin_lock(&sgx_global_lru.lock);
@@ -119,10 +121,14 @@ void sgx_reclaim_pages(void)
 		spin_lock(&bank->lock);
 		bank->pages[bank->free_cnt++] = epc_page;
 		spin_unlock(&bank->lock);
+
+		nr_reclaimed++;
 	}
 
 out:
 	cond_resched();
+
+	return nr_reclaimed;
 }
 
 static unsigned long sgx_calc_free_cnt(void)
