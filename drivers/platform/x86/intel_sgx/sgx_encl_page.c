@@ -238,7 +238,7 @@ struct sgx_epc_page *sgx_alloc_va_page(struct sgx_encl *encl)
 	struct sgx_epc_page *epc_page;
 	int ret;
 
-	epc_page = sgx_alloc_page(&encl->va_page_impl, 0);
+	epc_page = sgx_alloc_page(&encl->va_page_impl, encl->mm, 0);
 	if (IS_ERR(epc_page))
 		return (void *)epc_page;
 

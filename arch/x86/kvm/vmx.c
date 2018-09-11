@@ -1441,7 +1441,7 @@ static int __vmx_epc_fault(struct vmx_epc *epc, struct vm_area_struct *vma,
 		}
 	}
 
-	epc_page = sgx_alloc_page(&epc->impl, SGX_ALLOC_ATOMIC);
+	epc_page = sgx_alloc_page(&epc->impl, epc->kvm->mm, SGX_ALLOC_ATOMIC);
 	if (IS_ERR(epc_page))
 		return PTR_ERR(epc_page);
 
