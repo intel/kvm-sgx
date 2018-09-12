@@ -70,9 +70,10 @@ void sgx_reclaim_pages(void)
 					    struct sgx_epc_page, list);
 		list_del_init(&epc_page->list);
 
-		if (epc_page->impl->ops->get(epc_page))
+		if (epc_page->impl->ops->get(epc_page)) {
+			epc_page->desc |= SGX_EPC_PAGE_RECLAIM_IN_PROGRESS;
 			chunk[j++] = epc_page;
-		else
+		} else
 			epc_page->desc &= ~SGX_EPC_PAGE_RECLAIMABLE;
 	}
 	spin_unlock(&sgx_global_lru.lock);
@@ -85,6 +86,7 @@ void sgx_reclaim_pages(void)
 		epc_page->impl->ops->put(epc_page);
 
 		spin_lock(&sgx_global_lru.lock);
+		epc_page->desc &= ~SGX_EPC_PAGE_RECLAIM_IN_PROGRESS;
 		list_add_tail(&epc_page->list, &sgx_global_lru.reclaimable);
 		spin_unlock(&sgx_global_lru.lock);
 
@@ -109,7 +111,8 @@ void sgx_reclaim_pages(void)
 			 * page, otherwise the page could be re-allocated and
 			 * we'd call put() on the wrong impl.
 			 */
-			epc_page->desc &= ~SGX_EPC_PAGE_RECLAIMABLE;
+			epc_page->desc &= ~(SGX_EPC_PAGE_RECLAIMABLE |
+					    SGX_EPC_PAGE_RECLAIM_IN_PROGRESS);
 
 			bank = sgx_epc_bank(epc_page);
 			spin_lock(&bank->lock);
@@ -261,14 +264,14 @@ int __sgx_free_page(struct sgx_epc_page *page)
 	/*
 	 * The page may have already been remove from the LRUs, in which
 	 * case we can skip taking the LRU lock.  That is, unless the page
-	 * is actively being reclaimed, i.e. RECLAIMABLE is set but the
-	 * page isn't on a list, in which case return -EBUSY as we can't
-	 * free the page at this time since it's "owned" by the reclaimer.
+	 * is actively being reclaimed, i.e. RECLAIM{ABLE,_IN_PROGRESS} are
+	 * both set, in which case return -EBUSY as we can't free the page
+	 * at this time since it's "owned" by the reclaimer.
 	 */
 	if (!list_empty(&page->list) || page->desc & SGX_EPC_PAGE_RECLAIMABLE) {
 		spin_lock(&sgx_global_lru.lock);
 		if (page->desc & SGX_EPC_PAGE_RECLAIMABLE) {
-			if (list_empty(&page->list)) {
+			if (page->desc & SGX_EPC_PAGE_RECLAIM_IN_PROGRESS) {
 				spin_unlock(&sgx_global_lru.lock);
 				return -EBUSY;
 			}
