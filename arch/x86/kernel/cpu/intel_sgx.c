@@ -13,6 +13,7 @@
 #include <asm/sgx_pr.h>
 
 #include "intel_sgx.h"
+#include "intel_sgx_epc_cgroup.h"
 
 /**
  * enum sgx_swap_constants - the constants used by the swapping code
@@ -49,6 +50,10 @@ static DEFINE_PER_CPU(u64 [4], sgx_le_pubkey_hash_cache);
 
 static inline struct sgx_epc_lru *sgx_lru(struct sgx_epc_page *epc_page)
 {
+#ifdef CONFIG_CGROUP_SGX_EPC
+	if (epc_page->epc_cg)
+		return &epc_page->epc_cg->lru;
+#endif
 	return &sgx_global_lru;
 }
 
@@ -103,13 +108,23 @@ int sgx_reclaim_pages(struct sgx_epc_reclaim_control *rc)
 	int nr_reclaimed = 0;
 	LIST_HEAD(iso);
 
-	sgx_isolate_pages(&sgx_global_lru, &rc->nr_pages, &iso);
+        /*
+         * If we're not targeting a specific cgroup, take from the global
+         * list first, even when cgroups are enabled.  If we somehow have
+         * pages on the global LRU then they should get reclaimed asap.
+         */
+        if (!rc->epc_cg)
+                sgx_isolate_pages(&sgx_global_lru, &rc->nr_pages, &iso);
+
+#ifdef CONFIG_CGROUP_SGX_EPC
+	sgx_epc_cgroup_isolate_pages(rc, &iso);
+#endif
 
 	if (list_empty(&iso))
 		goto out;
 
 	list_for_each_entry_safe(epc_page, tmp, &iso, list) {
-		if (epc_page->impl->ops->reclaim(epc_page, false))
+		if (epc_page->impl->ops->reclaim(epc_page, rc->ignore_age))
 			continue;
 
 		epc_page->impl->ops->put(epc_page);
@@ -141,6 +156,13 @@ int sgx_reclaim_pages(struct sgx_epc_reclaim_control *rc)
 				    SGX_EPC_PAGE_RECLAIM_IN_PROGRESS);
 
 		list_del_init(&epc_page->list);
+
+#ifdef CONFIG_CGROUP_SGX_EPC
+		if (epc_page->epc_cg) {
+			sgx_epc_cgroup_uncharge(epc_page->epc_cg, 1);
+			epc_page->epc_cg = NULL;
+		}
+#endif
 
 		bank = sgx_epc_bank(epc_page);
 		spin_lock(&bank->lock);
@@ -218,7 +240,11 @@ static unsigned long sgx_calc_free_cnt(void)
 
 static inline bool sgx_can_reclaim(void)
 {
+#ifdef CONFIG_CGROUP_SGX_EPC
+	return !sgx_epc_cgroup_lru_empty(NULL);
+#else
 	return !list_empty(&sgx_global_lru.reclaimable);
+#endif
 }
 
 static bool sgx_should_reclaim(void)
@@ -290,9 +316,19 @@ struct sgx_epc_page *sgx_alloc_page(struct sgx_epc_page_impl *impl,
 {
 	struct sgx_epc_page *entry;
 	struct sgx_epc_lru *lru;
+#ifdef CONFIG_CGROUP_SGX_EPC
+	struct sgx_epc_cgroup *epc_cg;
+	int ret;
+#endif
 
 	if (WARN_ON_ONCE(!impl || !impl->ops || !impl->ops->oom))
 		return ERR_PTR(-EFAULT);
+
+#ifdef CONFIG_CGROUP_SGX_EPC
+	ret = sgx_epc_cgroup_try_charge(mm, flags, 1, &epc_cg);
+	if (ret)
+		return ERR_PTR(ret);
+#endif
 
 	for ( ; ; ) {
 		entry = sgx_try_alloc_page(impl);
@@ -319,10 +355,18 @@ struct sgx_epc_page *sgx_alloc_page(struct sgx_epc_page_impl *impl,
 		wake_up(&ksgxswapd_waitq);
 
 	if (!IS_ERR(entry)) {
+#ifdef CONFIG_CGROUP_SGX_EPC
+		WARN_ON(entry->epc_cg);
+		entry->epc_cg = epc_cg;
+#endif
 		lru = sgx_lru(entry);
 		spin_lock(&lru->lock);
 		list_add_tail(&entry->list, &lru->unreclaimable);
 		spin_unlock(&lru->lock);
+#ifdef CONFIG_CGROUP_SGX_EPC
+	} else {
+		sgx_epc_cgroup_uncharge(epc_cg, 1);
+#endif
 	}
 
 	return entry;
@@ -371,6 +415,13 @@ int __sgx_free_page(struct sgx_epc_page *page)
 	ret = __eremove(sgx_epc_addr(page));
 	if (ret)
 		return ret;
+
+#ifdef CONFIG_CGROUP_SGX_EPC
+	if (page->epc_cg) {
+		sgx_epc_cgroup_uncharge(page->epc_cg, 1);
+		page->epc_cg = NULL;
+	}
+#endif
 
 	spin_lock(&bank->lock);
 	bank->pages[bank->free_cnt++] = page;
