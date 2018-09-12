@@ -56,30 +56,33 @@ static DEFINE_PER_CPU(u64 [4], sgx_le_pubkey_hash_cache);
  */
 void sgx_reclaim_pages(void)
 {
-	struct sgx_epc_page *chunk[SGX_NR_TO_SCAN + 1];
-	struct sgx_epc_page *epc_page;
+	struct sgx_epc_page *epc_page, *tmp;
 	struct sgx_epc_bank *bank;
-	int i, j;
+	int i;
+	LIST_HEAD(iso);
 
 	spin_lock(&sgx_global_lru.lock);
-	for (i = 0, j = 0; i < SGX_NR_TO_SCAN; i++) {
+	for (i = 0; i < SGX_NR_TO_SCAN; i++) {
 		if (list_empty(&sgx_global_lru.reclaimable))
 			break;
 
 		epc_page = list_first_entry(&sgx_global_lru.reclaimable,
 					    struct sgx_epc_page, list);
-		list_del_init(&epc_page->list);
 
 		if (epc_page->impl->ops->get(epc_page)) {
 			epc_page->desc |= SGX_EPC_PAGE_RECLAIM_IN_PROGRESS;
-			chunk[j++] = epc_page;
-		} else
+			list_move_tail(&epc_page->list, &iso);
+		} else {
 			epc_page->desc &= ~SGX_EPC_PAGE_RECLAIMABLE;
+			list_del_init(&epc_page->list);
+		}
 	}
 	spin_unlock(&sgx_global_lru.lock);
 
-	for (i = 0; i < j; i++) {
-		epc_page = chunk[i];
+	if (list_empty(&iso))
+		goto out;
+
+	list_for_each_entry_safe(epc_page, tmp, &iso, list) {
 		if (epc_page->impl->ops->reclaim(epc_page))
 			continue;
 
@@ -87,40 +90,38 @@ void sgx_reclaim_pages(void)
 
 		spin_lock(&sgx_global_lru.lock);
 		epc_page->desc &= ~SGX_EPC_PAGE_RECLAIM_IN_PROGRESS;
-		list_add_tail(&epc_page->list, &sgx_global_lru.reclaimable);
+		list_move_tail(&epc_page->list, &sgx_global_lru.reclaimable);
 		spin_unlock(&sgx_global_lru.lock);
-
-		chunk[i] = NULL;
 	}
 
-	for (i = 0; i < j; i++) {
-		epc_page = chunk[i];
-		if (epc_page)
-			epc_page->impl->ops->block(epc_page);
+	if (list_empty(&iso))
+		goto out;
+
+	list_for_each_entry(epc_page, &iso, list)
+		epc_page->impl->ops->block(epc_page);
+
+	list_for_each_entry_safe(epc_page, tmp, &iso, list) {
+		epc_page->impl->ops->write(epc_page);
+		epc_page->impl->ops->put(epc_page);
+
+		/*
+		 * Put the page back on the free list only after we
+		 * have put() our reference to the owner of the EPC
+		 * page, otherwise the page could be re-allocated and
+		 * we'd call put() on the wrong impl.
+		 */
+		epc_page->desc &= ~(SGX_EPC_PAGE_RECLAIMABLE |
+				    SGX_EPC_PAGE_RECLAIM_IN_PROGRESS);
+
+		list_del_init(&epc_page->list);
+
+		bank = sgx_epc_bank(epc_page);
+		spin_lock(&bank->lock);
+		bank->pages[bank->free_cnt++] = epc_page;
+		spin_unlock(&bank->lock);
 	}
 
-	for (i = 0; i < j; i++) {
-		epc_page = chunk[i];
-		if (epc_page) {
-			epc_page->impl->ops->write(epc_page);
-			epc_page->impl->ops->put(epc_page);
-
-			/*
-			 * Put the page back on the free list only after we
-			 * have put() our reference to the owner of the EPC
-			 * page, otherwise the page could be re-allocated and
-			 * we'd call put() on the wrong impl.
-			 */
-			epc_page->desc &= ~(SGX_EPC_PAGE_RECLAIMABLE |
-					    SGX_EPC_PAGE_RECLAIM_IN_PROGRESS);
-
-			bank = sgx_epc_bank(epc_page);
-			spin_lock(&bank->lock);
-			bank->pages[bank->free_cnt++] = epc_page;
-			spin_unlock(&bank->lock);
-		}
-	}
-
+out:
 	cond_resched();
 }
 
