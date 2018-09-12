@@ -78,6 +78,8 @@ enum sgx_alloc_flags {
  * @SGX_EPC_PAGE_RECLAIMABLE: When set, indicates a page is reclaimable.  Used
  *			      when freeing a page to know that we also need to
  *			      remove the page from the active page list.
+ * @SGX_EPC_PAGE_RECLAIM_IN_PROGRESS:  When set, indicates a page is in the
+ *			      process of being reclaimed and cannot be freed.
  *
  * Defines the layout of the desc field in the &struct sgx_epc_page, which
  * contains EPC bank number, physical address of the page and the page status
@@ -86,6 +88,7 @@ enum sgx_alloc_flags {
 enum sgx_epc_page_desc {
 	SGX_EPC_BANK_MASK			= GENMASK_ULL(3, 0),
 	SGX_EPC_PAGE_RECLAIMABLE		= BIT(4),
+	SGX_EPC_PAGE_RECLAIM_IN_PROGRESS	= BIT(5),
 	/* bits 12-63 are reserved for the physical page address of the page */
 };
 
