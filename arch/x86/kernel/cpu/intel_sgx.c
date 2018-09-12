@@ -53,6 +53,36 @@ static inline struct sgx_epc_lru *sgx_lru(struct sgx_epc_page *epc_page)
 }
 
 /**
+ * sgx_isolate_pages - isolate pages from an LRU for reclaim
+ * @lru		LRU from which to reclaim
+ * @nr_pages	Number of pages to scan for reclaim
+ * @dst		Destination list to hold the isolated pages
+ */
+void sgx_isolate_pages(struct sgx_epc_lru *lru, int *nr_pages,
+		       struct list_head *dst)
+{
+	struct sgx_epc_page *epc_page;
+
+	spin_lock(&lru->lock);
+	for (; *nr_pages > 0; --(*nr_pages)) {
+		if (list_empty(&lru->reclaimable))
+			break;
+
+		epc_page = list_first_entry(&lru->reclaimable,
+					    struct sgx_epc_page, list);
+
+		if (epc_page->impl->ops->get(epc_page)) {
+			epc_page->desc |= SGX_EPC_PAGE_RECLAIM_IN_PROGRESS;
+			list_move_tail(&epc_page->list, dst);
+		} else {
+			epc_page->desc &= ~SGX_EPC_PAGE_RECLAIMABLE;
+			list_del_init(&epc_page->list);
+		}
+	}
+	spin_unlock(&lru->lock);
+}
+
+/**
  * sgx_reclaim_pages - reclaim EPC pages from the consumers
  *
  * @rc		Reclaim control, e.g. number of pages to scan
@@ -61,33 +91,19 @@ static inline struct sgx_epc_lru *sgx_lru(struct sgx_epc_page *epc_page)
  *
  * Scan @rc->nr_pages from the global list of reclaimable EPC pages and attempt
  * to them.  Pages that are being freed by the consumer (get() fails) or are
- * actively being used (reclaim() fails) are skipped.
+ * actively being used (reclaim() fails) are skipped.  Note that @rc->nr_pages
+ * is modified, i.e. multiple calls to sgx_reclaim_pages() with the same struct
+ * need to reset rc->nr_pages prior to every call.
  */
 int sgx_reclaim_pages(struct sgx_epc_reclaim_control *rc)
 {
 	struct sgx_epc_page *epc_page, *tmp;
 	struct sgx_epc_bank *bank;
 	struct sgx_epc_lru *lru;
-	int i, nr_reclaimed = 0;
+	int nr_reclaimed = 0;
 	LIST_HEAD(iso);
 
-	spin_lock(&sgx_global_lru.lock);
-	for (i = 0; i < rc->nr_pages; i++) {
-		if (list_empty(&sgx_global_lru.reclaimable))
-			break;
-
-		epc_page = list_first_entry(&sgx_global_lru.reclaimable,
-					    struct sgx_epc_page, list);
-
-		if (epc_page->impl->ops->get(epc_page)) {
-			epc_page->desc |= SGX_EPC_PAGE_RECLAIM_IN_PROGRESS;
-			list_move_tail(&epc_page->list, &iso);
-		} else {
-			epc_page->desc &= ~SGX_EPC_PAGE_RECLAIMABLE;
-			list_del_init(&epc_page->list);
-		}
-	}
-	spin_unlock(&sgx_global_lru.lock);
+	sgx_isolate_pages(&sgx_global_lru, &rc->nr_pages, &iso);
 
 	if (list_empty(&iso))
 		goto out;
