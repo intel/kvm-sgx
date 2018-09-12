@@ -44,6 +44,9 @@ struct sgx_epc_page_impl {
 struct sgx_epc_page {
 	unsigned long desc;
 	struct sgx_epc_page_impl *impl;
+#ifdef CONFIG_CGROUP_SGX_EPC
+	struct sgx_epc_cgroup *epc_cg;
+#endif
 	struct list_head list;
 };
 
