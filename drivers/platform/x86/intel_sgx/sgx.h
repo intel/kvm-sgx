@@ -130,6 +130,7 @@ enum sgx_encl_flags {
 
 struct sgx_encl {
 	unsigned int flags;
+	long cause_of_death;
 	uint64_t attributes;
 	uint64_t xfrm;
 	unsigned int page_cnt;
@@ -164,7 +165,7 @@ extern const struct vm_operations_struct sgx_vm_ops;
 
 int sgx_encl_find(struct mm_struct *mm, unsigned long addr,
 		  struct vm_area_struct **vma);
-void sgx_invalidate(struct sgx_encl *encl, bool flush_cpus);
+void sgx_invalidate(struct sgx_encl *encl, long error, bool flush_cpus);
 
 /**
  * SGX_INVD - invalidate an enclave on failure, i.e. if ret != 0
@@ -192,7 +193,7 @@ do {									     \
 	if (unlikely(ret)) {						     \
 		int trapnr = IS_ENCLS_FAULT(ret) ? ENCLS_TRAPNR(ret) : 0;    \
 		WARN(trapnr != sgx_epcm_trapnr, "sgx: " fmt, ##__VA_ARGS__); \
-		sgx_invalidate(encl, true);				     \
+		sgx_invalidate(encl, ret, true);			     \
 	}								     \
 } while (0)
 

@@ -32,7 +32,7 @@ static void sgx_vma_close(struct vm_area_struct *vma)
 		return;
 
 	mutex_lock(&encl->lock);
-	sgx_invalidate(encl, true);
+	sgx_invalidate(encl, -EFAULT, true);
 	mutex_unlock(&encl->lock);
 	kref_put(&encl->refcount, sgx_encl_release);
 }
@@ -112,10 +112,12 @@ static int sgx_vma_access(struct vm_area_struct *vma, unsigned long addr,
 	if (!encl)
 		return -EFAULT;
 
+	if (encl->flags & SGX_ENCL_DEAD)
+		return encls_to_err(encl->cause_of_death);
+
 	if (!(encl->flags & SGX_ENCL_DEBUG) ||
-	    !(encl->flags & SGX_ENCL_INITIALIZED) ||
-	    (encl->flags & SGX_ENCL_DEAD))
-		return -EFAULT;
+	    !(encl->flags & SGX_ENCL_INITIALIZED))
+		return -EINVAL;
 
 	for (i = 0; i < len; i += cnt) {
 		if (!entry || !((addr + i) & (PAGE_SIZE - 1))) {

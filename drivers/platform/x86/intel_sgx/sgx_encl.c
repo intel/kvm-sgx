@@ -56,6 +56,7 @@ int sgx_encl_find(struct mm_struct *mm, unsigned long addr,
 /**
  * sgx_invalidate - kill an enclave
  * @encl:	an &sgx_encl instance
+ * @err		the error code, i.e. why the enclave is being invalidated
  * @flush_cpus	Set if there can be active threads inside the enclave.
  *
  * Mark the enclave as dead and immediately free its EPC pages (but not
@@ -63,7 +64,7 @@ int sgx_encl_find(struct mm_struct *mm, unsigned long addr,
  * are destroyed first and hardware threads are kicked out so that the
  * EPC pages can be safely manipulated.
  */
-void sgx_invalidate(struct sgx_encl *encl, bool flush_cpus)
+void sgx_invalidate(struct sgx_encl *encl, long err, bool flush_cpus)
 {
 	struct sgx_encl_page *entry;
 	struct radix_tree_iter iter;
@@ -71,10 +72,13 @@ void sgx_invalidate(struct sgx_encl *encl, bool flush_cpus)
 	unsigned long addr;
 	void **slot;
 
+	WARN_ON_ONCE(!err);
+
 	if (encl->flags & SGX_ENCL_DEAD)
 		return;
 
 	encl->flags |= SGX_ENCL_DEAD;
+	encl->cause_of_death = err;
 	if (flush_cpus) {
 		radix_tree_for_each_slot(slot, &encl->page_tree, &iter, 0) {
 			entry = *slot;
@@ -241,11 +245,11 @@ static void sgx_add_page_worker(struct work_struct *work)
 		mutex_lock(&encl->lock);
 
 		if (IS_ERR(epc_page)) {
-			sgx_invalidate(encl, false);
+			sgx_invalidate(encl, PTR_ERR(epc_page), false);
 			skip_rest = true;
 		} else	if (!sgx_process_add_page_req(req, epc_page)) {
 			sgx_free_page(epc_page);
-			sgx_invalidate(encl, false);
+			sgx_invalidate(encl, -EFAULT, false);
 			skip_rest = true;
 		}
 
@@ -343,7 +347,10 @@ static void sgx_mmu_notifier_release(struct mmu_notifier *mn,
 		container_of(mn, struct sgx_encl, mmu_notifier);
 
 	mutex_lock(&encl->lock);
-	encl->flags |= SGX_ENCL_DEAD;
+	if (!(encl->flags & SGX_ENCL_DEAD)) {
+		encl->flags |= SGX_ENCL_DEAD;
+		encl->cause_of_death = -EFAULT;
+	}
 	mutex_unlock(&encl->lock);
 }
 
@@ -458,7 +465,7 @@ static int sgx_encl_pm_notifier(struct notifier_block *nb,
 		return NOTIFY_DONE;
 
 	mutex_lock(&encl->lock);
-	sgx_invalidate(encl, false);
+	sgx_invalidate(encl, -EFAULT, false);
 	encl->flags |= SGX_ENCL_SUSPEND;
 	mutex_unlock(&encl->lock);
 	flush_work(&encl->add_page_work);
@@ -738,9 +745,13 @@ int sgx_encl_add_page(struct sgx_encl *encl, unsigned long addr, void *data,
 	if (ret)
 		return ret;
 	mutex_lock(&encl->lock);
-	if (encl->flags & (SGX_ENCL_INITIALIZED | SGX_ENCL_DEAD)) {
+	if (encl->flags & SGX_ENCL_INITIALIZED) {
 		mutex_unlock(&encl->lock);
 		return -EINVAL;
+	}
+	if (encl->flags & SGX_ENCL_DEAD) {
+		mutex_unlock(&encl->lock);
+		return encl->cause_of_death;
 	}
 	encl_page = sgx_encl_alloc_page(encl, addr);
 	if (IS_ERR(encl_page)) {
@@ -817,7 +828,7 @@ int sgx_encl_init(struct sgx_encl *encl, struct sgx_sigstruct *sigstruct,
 	}
 	if (encl->flags & SGX_ENCL_DEAD) {
 		mutex_unlock(&encl->lock);
-		return -EFAULT;
+		return encl->cause_of_death;
 	}
 
 	for (i = 0; i < SGX_EINIT_SLEEP_COUNT; i++) {
@@ -856,8 +867,10 @@ static int sgx_encl_mod(struct sgx_encl_page *encl_page,
 	bool perm = (op == SGX_ENCLAVE_MODIFY_PERMISSIONS);
 	int ret;
 
-	if ((encl->flags & SGX_ENCL_DEAD) ||
-	    !(encl->flags & SGX_ENCL_INITIALIZED))
+	if (encl->flags & SGX_ENCL_DEAD)
+		return encl->cause_of_death;
+
+	if (!(encl->flags & SGX_ENCL_INITIALIZED))
 		return -EINVAL;
 
 	sgx_encl_block(encl_page);
