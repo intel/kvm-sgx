@@ -87,8 +87,10 @@ static struct sgx_encl_page *__sgx_fault_page(struct vm_area_struct *vma,
 	struct sgx_encl_page *entry;
 	int rc = 0;
 
-	if ((encl->flags & SGX_ENCL_DEAD) ||
-	    !(encl->flags & SGX_ENCL_INITIALIZED))
+	if (encl->flags & SGX_ENCL_DEAD)
+		return ERR_PTR(encl->cause_of_death);
+
+	if (!(encl->flags & SGX_ENCL_INITIALIZED))
 		return ERR_PTR(-EFAULT);
 
 	entry = radix_tree_lookup(&encl->page_tree, addr >> PAGE_SHIFT);
