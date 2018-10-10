@@ -178,7 +178,8 @@ static void sgx_encl_page_write(struct sgx_epc_page *epc_page)
 	mutex_lock(&encl->lock);
 	sgx_write_page(epc_page, false);
 	encl->secs_child_cnt--;
-	if (!encl->secs_child_cnt && (encl->flags & SGX_ENCL_INITIALIZED))
+	if (!encl->secs_child_cnt &&
+	    (encl->flags & (SGX_ENCL_INITIALIZED | SGX_ENCL_DEAD)))
 		sgx_write_page(encl->secs.epc_page, true);
 	mutex_unlock(&encl->lock);
 	up_read(&encl->mm->mmap_sem);
