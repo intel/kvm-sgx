@@ -1113,6 +1113,7 @@ void sgx_encl_release(struct kref *ref)
 	if (encl->mmu_notifier.ops) {
 		mmu_notifier_unregister_no_release(&encl->mmu_notifier,
 						   encl->mm);
+		mmu_notifier_synchronize();
 		encl->mmu_notifier.ops = LIST_POISON1;
 	}
 
