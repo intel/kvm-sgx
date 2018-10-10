@@ -1098,7 +1098,8 @@ int sgx_encl_load_page(struct sgx_encl_page *encl_page,
  * @kref:	address of a kref inside &sgx_encl
  *
  * Used together with kref_put(). Frees all the resources associated with the
- * enclave and the instance itself.
+ * enclave and the instance itself.  Poisons the enclave's callback operations
+ * and pointers to aid in debugging use-after-free scenarios.
  */
 void sgx_encl_release(struct kref *ref)
 {
@@ -1107,15 +1108,17 @@ void sgx_encl_release(struct kref *ref)
 	struct radix_tree_iter iter;
 	void **slot;
 
+	encl->va_page_impl.ops = LIST_POISON1;
+
 	if (encl->mmu_notifier.ops) {
 		mmu_notifier_unregister_no_release(&encl->mmu_notifier,
 						   encl->mm);
-		encl->mmu_notifier.ops = NULL;
+		encl->mmu_notifier.ops = LIST_POISON1;
 	}
 
 	if (encl->pm_notifier.notifier_call) {
 		unregister_pm_notifier(&encl->pm_notifier);
-		encl->pm_notifier.notifier_call = NULL;
+		encl->pm_notifier.notifier_call = LIST_POISON1;
 	}
 
 	radix_tree_for_each_slot(slot, &encl->page_tree, &iter, 0) {
@@ -1125,7 +1128,7 @@ void sgx_encl_release(struct kref *ref)
 
 	if (encl->tgid) {
 		put_pid(encl->tgid);
-		encl->tgid = NULL;
+		encl->tgid = LIST_POISON1;
 	}
 
 	sgx_free_va_pages(encl);
@@ -1135,12 +1138,12 @@ void sgx_encl_release(struct kref *ref)
 
 	if (encl->backing) {
 		fput(encl->backing);
-		encl->backing = NULL;
+		encl->backing = LIST_POISON1;
 	}
 
 	if (encl->pcmd) {
 		fput(encl->pcmd);
-		encl->pcmd = NULL;
+		encl->pcmd = LIST_POISON1;
 	}
 
 	kfree(encl);
