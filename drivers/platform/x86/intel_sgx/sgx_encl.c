@@ -389,6 +389,11 @@ static int sgx_encl_grow(struct sgx_encl *encl)
 		(SGX_ENCL_PAGE_VA_OFFSET_MASK >> 3) + 1);
 
 	mutex_lock(&encl->lock);
+	if (encl->flags & SGX_ENCL_DEAD) {
+		mutex_unlock(&encl->lock);
+		return encl->cause_of_death;
+	}
+
 	if (!(encl->page_cnt % SGX_VA_SLOT_COUNT)) {
 		mutex_unlock(&encl->lock);
 
@@ -403,7 +408,12 @@ static int sgx_encl_grow(struct sgx_encl *encl)
 		}
 
 		mutex_lock(&encl->lock);
-		if (encl->page_cnt % SGX_VA_SLOT_COUNT) {
+		if (encl->flags & SGX_ENCL_DEAD) {
+			sgx_free_page(va_page->epc_page);
+			kfree(va_page);
+			mutex_unlock(&encl->lock);
+			return encl->cause_of_death;
+		} else if (encl->page_cnt % SGX_VA_SLOT_COUNT) {
 			sgx_free_page(va_page->epc_page);
 			kfree(va_page);
 		} else {
