@@ -53,6 +53,19 @@ int sgx_encl_find(struct mm_struct *mm, unsigned long addr,
 	return encl ? 0 : -ENOENT;
 }
 
+static void sgx_free_va_pages(struct sgx_encl *encl)
+{
+	struct sgx_va_page *va_page;
+
+	while (!list_empty(&encl->va_pages)) {
+		va_page = list_first_entry(&encl->va_pages, struct sgx_va_page,
+					   list);
+		list_del(&va_page->list);
+		sgx_free_page(va_page->epc_page);
+		kfree(va_page);
+	}
+}
+
 /**
  * sgx_invalidate - kill an enclave
  * @encl:	an &sgx_encl instance
@@ -102,6 +115,8 @@ void sgx_invalidate(struct sgx_encl *encl, long err, bool flush_cpus)
 				entry->desc &= ~SGX_ENCL_PAGE_LOADED;
 		}
 	}
+
+	sgx_free_va_pages(encl);
 }
 
 static int sgx_measure(struct sgx_epc_page *secs_page,
@@ -1073,7 +1088,6 @@ void sgx_encl_release(struct kref *ref)
 	struct sgx_encl *encl = container_of(ref, struct sgx_encl, refcount);
 	struct sgx_encl_page *entry;
 	struct radix_tree_iter iter;
-	struct sgx_va_page *va_page;
 	void **slot;
 
 	if (encl->mmu_notifier.ops) {
@@ -1097,13 +1111,7 @@ void sgx_encl_release(struct kref *ref)
 		encl->tgid = NULL;
 	}
 
-	while (!list_empty(&encl->va_pages)) {
-		va_page = list_first_entry(&encl->va_pages, struct sgx_va_page,
-					   list);
-		list_del(&va_page->list);
-		sgx_free_page(va_page->epc_page);
-		kfree(va_page);
-	}
+	sgx_free_va_pages(encl);
 
 	if (encl->secs.desc & SGX_ENCL_PAGE_LOADED)
 		sgx_free_page(encl->secs.epc_page);
