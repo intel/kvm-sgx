@@ -111,11 +111,18 @@ void sgx_invalidate(struct sgx_encl *encl, long err, bool flush_cpus)
 		 */
 		if ((entry->desc & SGX_ENCL_PAGE_LOADED) &&
 		    !(entry->desc & SGX_ENCL_PAGE_RECLAIMED)) {
-			if (!__sgx_free_page(entry->epc_page))
+			if (!__sgx_free_page(entry->epc_page)) {
+				encl->secs_child_cnt--;
 				entry->desc &= ~SGX_ENCL_PAGE_LOADED;
+			}
 		}
 	}
 
+	if (!encl->secs_child_cnt &&
+	    (encl->secs.desc & SGX_ENCL_PAGE_LOADED)) {
+		encl->secs.desc &= ~SGX_ENCL_PAGE_LOADED;
+		sgx_free_page(encl->secs.epc_page);
+	}
 	sgx_free_va_pages(encl);
 }
 
