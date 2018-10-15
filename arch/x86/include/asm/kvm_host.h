@@ -1136,6 +1136,10 @@ struct kvm_x86_ops {
 	int (*mem_enc_unreg_region)(struct kvm *kvm, struct kvm_enc_region *argp);
 
 	int (*get_msr_feature)(struct kvm_msr_entry *entry);
+
+	int (*set_sgx_epc)(struct kvm *kvm, struct kvm_memory_slot *memslot,
+			   const struct kvm_userspace_memory_region *mem,
+			   enum kvm_mr_change change);
 };
 
 struct kvm_arch_async_pf {
