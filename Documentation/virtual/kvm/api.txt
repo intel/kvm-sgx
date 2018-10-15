@@ -1018,9 +1018,10 @@ struct kvm_userspace_memory_region {
 	__u64 userspace_addr; /* start of the userspace allocated memory */
 };
 
-/* for kvm_memory_region::flags */
+/* for kvm_userspace_memory_region::flags */
 #define KVM_MEM_LOG_DIRTY_PAGES	(1UL << 0)
 #define KVM_MEM_READONLY	(1UL << 1)
+#define KVM_MEM_SGX_EPC		(1UL << 2)
 
 This ioctl allows the user to create or modify a guest physical memory
 slot.  When changing an existing slot, it may be moved in the guest
@@ -1047,12 +1048,23 @@ It is recommended that the lower 21 bits of guest_phys_addr and userspace_addr
 be identical.  This allows large pages in the guest to be backed by large
 pages in the host.
 
-The flags field supports two flags: KVM_MEM_LOG_DIRTY_PAGES and
-KVM_MEM_READONLY.  The former can be set to instruct KVM to keep track of
-writes to memory within the slot.  See KVM_GET_DIRTY_LOG ioctl to know how to
-use it.  The latter can be set, if KVM_CAP_READONLY_MEM capability allows it,
-to make a new slot read-only.  In this case, writes to this memory will be
-posted to userspace as KVM_EXIT_MMIO exits.
+The flags field supports three flags: KVM_MEM_LOG_DIRTY_PAGES, KVM_MEM_READONLY
+and KVM_MEM_SGX_EPC.  KVM_MEM_LOG_DIRTY_PAGES can be set to instruct KVM to
+keep track of writes to memory within the slot.  See KVM_GET_DIRTY_LOG ioctl to
+know how to use it.  KVM_MEM_READONLY can be set, if the KVM_CAP_READONLY_MEM
+capability allows it, to make a new slot read-only.  In this case, writes to
+this memory will be posted to userspace as KVM_EXIT_MMIO exits.
+KVM_MEM_SGX_EPC can be set, if the KVM_CAP_X86_SGX_EPC capability allows it,
+to denote a region as Secure Guard eXtensions (SGX) Enclave Page Cache (EPC)
+memory.
+
+SGX EPC memory regions do not support dirty logging or being marked readonly,
+and can only be created in the primary address space (EPC literally cannot be
+accessed in SMM).  KVM currently supports creating only a single EPC memory
+region.  Userspace is not responsible for providing backing for SGX EPC, i.e.
+the userspace_addr field is ignored for SGX EPC.  Oversubscription of SGX EPC
+is not supported in KVM, e.g. KVM will report -ENOMEM to userspace upon failure
+to allocate EPC or if a VM's EPC pages are forcefully reclaimed.
 
 When the KVM_CAP_SYNC_MMU capability is available, changes in the backing of
 the memory region are automatically reflected into the guest.  For example, an
@@ -4772,3 +4784,10 @@ CPU when the exception is taken. If this virtual SError is taken to EL1 using
 AArch64, this value will be reported in the ISS field of ESR_ELx.
 
 See KVM_CAP_VCPU_EVENTS for more details.
+
+8.20 KVM_CAP_X86_SGX_EPC
+
+Architectures: x86
+
+This capability indicates that KVM supports creating SGX EPC memory regions
+via the KVM_MEM_SGX_EPC flag in struct kvm_userspace_memory_region::flags.

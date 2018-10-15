@@ -316,6 +316,15 @@ static inline unsigned long *kvm_second_dirty_bitmap(struct kvm_memory_slot *mem
 	return memslot->dirty_bitmap + len / sizeof(*memslot->dirty_bitmap);
 }
 
+static inline bool kvm_is_sgx_epc_memslot(struct kvm_memory_slot *memslot)
+{
+#ifdef __KVM_HAVE_SGX_EPC
+	return memslot && (memslot->flags & KVM_MEM_SGX_EPC);
+#else
+	return false;
+#endif
+}
+
 struct kvm_s390_adapter_int {
 	u64 ind_addr;
 	u64 summary_addr;

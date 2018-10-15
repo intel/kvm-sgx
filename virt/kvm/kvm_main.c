@@ -862,6 +862,10 @@ static int check_memory_region_flags(const struct kvm_userspace_memory_region *m
 #ifdef __KVM_HAVE_READONLY_MEM
 	valid_flags |= KVM_MEM_READONLY;
 #endif
+#ifdef __KVM_HAVE_SGX_EPC
+	if (mem->flags & KVM_MEM_SGX_EPC)
+		valid_flags = KVM_MEM_SGX_EPC;
+#endif
 
 	if (mem->flags & ~valid_flags)
 		return -EINVAL;
@@ -936,7 +940,7 @@ int __kvm_set_memory_region(struct kvm *kvm,
 	if (mem->guest_phys_addr & (PAGE_SIZE - 1))
 		goto out;
 	/* We can read the guest memory with __xxx_user() later on. */
-	if ((id < KVM_USER_MEM_SLOTS) &&
+	if ((id < KVM_USER_MEM_SLOTS) && !(mem->flags & KVM_MEM_SGX_EPC) &&
 	    ((mem->userspace_addr & (PAGE_SIZE - 1)) ||
 	     !access_ok(VERIFY_WRITE,
 			(void __user *)(unsigned long)mem->userspace_addr,
