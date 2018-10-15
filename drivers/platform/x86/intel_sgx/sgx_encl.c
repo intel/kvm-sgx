@@ -217,14 +217,14 @@ static bool sgx_process_add_page_req(struct sgx_add_page_req *req,
 
 	sgx_put_backing(backing, false);
 	if (ret) {
-		sgx_err(encl, "EADD returned %d\n", ret);
+		SGX_INVD(ret, encl, "EADD returned %d (0x%x)", ret, ret);
 		zap_vma_ptes(vma, addr, PAGE_SIZE);
 		return false;
 	}
 
 	ret = sgx_measure(encl->secs.epc_page, epc_page, req->mrmask);
 	if (ret) {
-		sgx_err(encl, "EEXTEND returned %d\n", ret);
+		SGX_INVD(ret, encl, "EEXTEND returned %d (0x%x)", ret, ret);
 		zap_vma_ptes(vma, addr, PAGE_SIZE);
 		return false;
 	}
@@ -883,7 +883,9 @@ int sgx_encl_init(struct sgx_encl *encl, struct sgx_sigstruct *sigstruct,
 		}
 	}
 
-	if (ret > 0)
+	if (unlikely(IS_ENCLS_FAULT(ret)))
+		SGX_INVD(ret, encl, "EINIT returned %d (%x)", ret, ret);
+	else if (ret > 0)
 		sgx_dbg(encl, "EINIT returned %d\n", ret);
 	else if (!ret)
 		encl->flags |= SGX_ENCL_INITIALIZED;
