@@ -2969,6 +2969,9 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_X2APIC_API:
 		r = KVM_X2APIC_API_VALID_FLAGS;
 		break;
+	case KVM_CAP_X86_SGX_EPC:
+		r = !!kvm_x86_ops->set_sgx_epc;
+		break;
 	default:
 		break;
 	}
@@ -9023,7 +9026,13 @@ int kvm_arch_prepare_memory_region(struct kvm *kvm,
 				const struct kvm_userspace_memory_region *mem,
 				enum kvm_mr_change change)
 {
-	return 0;
+	if (!kvm_is_sgx_epc_memslot(memslot))
+		return 0;
+
+	if (!kvm_x86_ops->set_sgx_epc)
+		return -ENXIO;
+
+	return kvm_x86_ops->set_sgx_epc(kvm, memslot, mem, change);
 }
 
 static void kvm_mmu_slot_apply_flags(struct kvm *kvm,
