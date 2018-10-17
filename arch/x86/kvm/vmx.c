@@ -1399,6 +1399,8 @@ struct vmx_epc_page {
 struct vmx_epc {
 	u64 base;
 	u64 size;
+	struct kvm *kvm;
+	struct kref kref;
 	struct rw_semaphore lock;
 	struct radix_tree_root page_tree;
 	struct sgx_epc_page_impl impl;
@@ -1409,7 +1411,56 @@ static inline struct vmx_epc *to_vmx_epc(struct kvm *kvm)
 	return to_kvm_vmx(kvm)->epc;
 }
 
-static const struct sgx_epc_page_ops vmx_epc_ops;
+static bool vmx_epc_get(struct sgx_epc_page *epc_page)
+{
+	struct vmx_epc *epc;
+
+	epc = container_of(epc_page->impl, struct vmx_epc, impl);
+	return !!kref_get_unless_zero(&epc->kref);
+}
+
+static void vmx_epc_free_pages(struct vmx_epc *epc);
+static void vmx_epc_free(struct kref *kref);
+
+static bool vmx_epc_oom(struct sgx_epc_page *epc_page)
+{
+	struct vm_area_struct *vma;
+	struct vmx_epc *epc;
+	unsigned long hva;
+	int idx;
+
+	epc = container_of(epc_page->impl, struct vmx_epc, impl);
+
+	down_write(&epc->lock);
+	if (!epc->kvm)
+		goto out;
+
+	idx = srcu_read_lock(&epc->kvm->srcu);
+	hva = gfn_to_hva(epc->kvm, PFN_DOWN(epc->base));
+	srcu_read_unlock(&epc->kvm->srcu, idx);
+
+	if (kvm_is_error_hva(hva))
+		goto free_pages;
+
+	vma = find_vma_intersection(epc->kvm->mm, hva, hva + 1);
+	if (!vma || vma->vm_private_data != epc)
+		goto free_pages;
+
+	zap_vma_ptes(vma, hva, epc->size);
+
+free_pages:
+	vmx_epc_free_pages(epc);
+
+out:
+	up_write(&epc->lock);
+	kref_put(&epc->kref, vmx_epc_free);
+	return true;
+}
+
+static const struct sgx_epc_page_ops vmx_epc_ops = {
+	.get = vmx_epc_get,
+	.oom = vmx_epc_oom,
+};
 
 static int __vmx_epc_fault(struct vmx_epc *epc, struct vm_area_struct *vma,
 			   unsigned long hva)
@@ -1533,6 +1584,8 @@ static int vmx_epc_create(struct kvm *kvm, struct kvm_memory_slot *memslot)
 	epc->base = base;
 	epc->size = size;
 	epc->impl.ops = &vmx_epc_ops;
+	epc->kvm = kvm;
+	kref_init(&epc->kref);
 
 	kvm_vmx->epc = epc;
 
@@ -1547,27 +1600,16 @@ static int vmx_epc_create(struct kvm *kvm, struct kvm_memory_slot *memslot)
 	return 0;
 }
 
-static void __vmx_epc_destroy(struct kvm *kvm)
+static void vmx_epc_free_pages(struct vmx_epc *epc)
 {
-	struct kvm_vmx *kvm_vmx = to_kvm_vmx(kvm);
-	struct vmx_epc *epc = to_vmx_epc(kvm);
 	struct radix_tree_iter iter;
 	struct vmx_epc_page *page;
 	void **slot;
 
-	LIST_HEAD(secs_pages);
-
-	if (!epc)
-		return;
-
 	radix_tree_for_each_slot(slot, &epc->page_tree, &iter, 0) {
 		page = *slot;
-		if (page->epc_page) {
-			if (__sgx_free_page(page->epc_page))
-				continue;
-		}
-		kfree(page);
-		radix_tree_delete(&epc->page_tree, iter.index);
+		if (page->epc_page && !__sgx_free_page(page->epc_page))
+			page->epc_page = NULL;
 	}
 
 	/*
@@ -1580,16 +1622,41 @@ static void __vmx_epc_destroy(struct kvm *kvm)
 	 */
 	radix_tree_for_each_slot(slot, &epc->page_tree, &iter, 0) {
 		page = *slot;
-		if (!(WARN_ON(!page->epc_page)))
+		if (unlikely(page->epc_page))
 			sgx_free_page(page->epc_page);
+	}
+}
+
+static void vmx_epc_free(struct kref *kref)
+{
+	struct vmx_epc *epc = container_of(kref, struct vmx_epc, kref);
+	struct radix_tree_iter iter;
+	void **slot;
+
+	radix_tree_for_each_slot(slot, &epc->page_tree, &iter, 0) {
+		kfree(*slot);
 		radix_tree_delete(&epc->page_tree, iter.index);
 	}
 
+	kfree(epc);
+}
+
+static void __vmx_epc_destroy(struct kvm *kvm)
+{
+	struct kvm_vmx *kvm_vmx = to_kvm_vmx(kvm);
+	struct vmx_epc *epc = to_vmx_epc(kvm);
+
+	if (!epc)
+		return;
+
 	kvm_vmx->epc = NULL;
 
-	kfree(epc);
+	down_write(&epc->lock);
+	vmx_epc_free_pages(epc);
+	epc->kvm = NULL;
+	up_write(&epc->lock);
 
-	return;
+	kref_put(&epc->kref, vmx_epc_free);
 }
 
 static int vmx_epc_destroy(struct kvm *kvm, struct kvm_memory_slot *memslot)
