@@ -164,6 +164,44 @@ static inline void sgx_global_reclaim_pages(void)
 	sgx_reclaim_pages(&rc);
 }
 
+static inline struct sgx_epc_page *sgx_get_oom_victim(struct sgx_epc_lru *lru)
+{
+	struct sgx_epc_page *epc_page, *tmp;
+
+	if (list_empty(&lru->unreclaimable))
+		return NULL;
+
+	list_for_each_entry_safe(epc_page, tmp, &lru->unreclaimable, list) {
+		list_del_init(&epc_page->list);
+
+		if (epc_page->impl->ops->get(epc_page))
+			return epc_page;
+	}
+	return NULL;
+}
+
+/**
+ * sgx_oom - invoke EPC out-of-memory handling on target LRU
+ * @lru		LRU that is OOM
+ *
+ * Return: %true if a victim was found and signaled
+ */
+bool sgx_oom(struct sgx_epc_lru *lru)
+{
+	struct sgx_epc_page *victim;
+
+retry:
+	spin_lock(&lru->lock);
+	victim = sgx_get_oom_victim(lru);
+	spin_unlock(&lru->lock);
+
+	if (!victim)
+		return false;
+	if (!victim->impl->ops->oom(victim))
+		goto retry;
+	return true;
+}
+
 static unsigned long sgx_calc_free_cnt(void)
 {
 	struct sgx_epc_bank *bank;
@@ -252,7 +290,7 @@ struct sgx_epc_page *sgx_alloc_page(struct sgx_epc_page_impl *impl,
 	struct sgx_epc_page *entry;
 	struct sgx_epc_lru *lru;
 
-	if (WARN_ON_ONCE(!impl))
+	if (WARN_ON_ONCE(!impl || !impl->ops || !impl->ops->oom))
 		return ERR_PTR(-EFAULT);
 
 	for ( ; ; ) {

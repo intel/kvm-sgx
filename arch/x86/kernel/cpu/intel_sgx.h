@@ -31,5 +31,6 @@ void sgx_epc_reclaim_control_init(struct sgx_epc_reclaim_control *rc,
 int sgx_reclaim_pages(struct sgx_epc_reclaim_control *rc);
 void sgx_isolate_pages(struct sgx_epc_lru *lru, int *nr_pages,
 		       struct list_head *dst);
+bool sgx_oom(struct sgx_epc_lru *lru);
 
 #endif /* _ASM_X86_INTEL_SGX_H */
