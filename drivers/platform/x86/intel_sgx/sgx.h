@@ -172,7 +172,8 @@ extern const struct vm_operations_struct sgx_vm_ops;
 
 int sgx_encl_find(struct mm_struct *mm, unsigned long addr,
 		  struct vm_area_struct **vma);
-void sgx_invalidate(struct sgx_encl *encl, long error, bool flush_cpus);
+bool sgx_invalidate(struct sgx_encl *encl, long error, bool flush_cpus);
+bool sgx_encl_oom(struct sgx_encl *encl);
 
 /**
  * SGX_INVD - invalidate an enclave on failure, i.e. if ret != 0
