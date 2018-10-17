@@ -72,12 +72,14 @@ static void sgx_free_va_pages(struct sgx_encl *encl)
  * @err		the error code, i.e. why the enclave is being invalidated
  * @flush_cpus	Set if there can be active threads inside the enclave.
  *
+ * Return: %true if the enclave was live, %false if it was already dead.
+ *
  * Mark the enclave as dead and immediately free its EPC pages (but not
  * its resources).  For active enclaves, the entry points to the enclave
  * are destroyed first and hardware threads are kicked out so that the
  * EPC pages can be safely manipulated.
  */
-void sgx_invalidate(struct sgx_encl *encl, long err, bool flush_cpus)
+bool sgx_invalidate(struct sgx_encl *encl, long err, bool flush_cpus)
 {
 	struct sgx_encl_page *entry;
 	struct radix_tree_iter iter;
@@ -88,7 +90,7 @@ void sgx_invalidate(struct sgx_encl *encl, long err, bool flush_cpus)
 	WARN_ON_ONCE(!err);
 
 	if (encl->flags & SGX_ENCL_DEAD)
-		return;
+		return false;
 
 	encl->flags |= SGX_ENCL_DEAD;
 	encl->cause_of_death = err;
@@ -124,6 +126,21 @@ void sgx_invalidate(struct sgx_encl *encl, long err, bool flush_cpus)
 		sgx_free_page(encl->secs.epc_page);
 	}
 	sgx_free_va_pages(encl);
+
+	return true;
+}
+
+bool sgx_encl_oom(struct sgx_encl *encl)
+{
+	bool ret;
+
+	mutex_lock(&encl->lock);
+	ret = sgx_invalidate(encl, -ENOMEM, true);
+	mutex_unlock(&encl->lock);
+
+	kref_put(&encl->refcount, sgx_encl_release);
+
+	return ret;
 }
 
 static int sgx_measure(struct sgx_epc_page *secs_page,
@@ -425,12 +442,25 @@ static int sgx_encl_grow(struct sgx_encl *encl)
 	return 0;
 }
 
+static inline struct sgx_encl *va_epc_to_encl(struct sgx_epc_page *epc_page)
+{
+	return container_of(epc_page->impl, struct sgx_encl, va_page_impl);
+}
 
-/*
- * Reclamation of VA pages is not (yet) supported,
- * i.e. all ops are unimplemented.
- */
-const struct sgx_epc_page_ops sgx_va_page_ops;
+static bool sgx_va_page_get(struct sgx_epc_page *epc_page)
+{
+	return kref_get_unless_zero(&va_epc_to_encl(epc_page)->refcount) != 0;
+}
+
+static bool sgx_va_page_oom(struct sgx_epc_page *epc_page)
+{
+	return sgx_encl_oom(va_epc_to_encl(epc_page));
+}
+
+const struct sgx_epc_page_ops sgx_va_page_ops = {
+	.get = sgx_va_page_get,
+	.oom = sgx_va_page_oom,
+};
 
 /**
  * sgx_encl_alloc - allocate memory for an enclave and set attributes
@@ -533,6 +563,9 @@ int sgx_encl_create(struct sgx_encl *encl, struct sgx_secs *secs)
 	struct sgx_epc_page *secs_epc;
 	long ret;
 
+	encl->secs.encl = encl;
+	encl->secs.impl.ops = &sgx_encl_page_ops;
+
 	secs_epc = sgx_alloc_page(&encl->secs.impl, 0);
 	if (IS_ERR(secs_epc)) {
 		ret = PTR_ERR(secs_epc);
@@ -540,8 +573,6 @@ int sgx_encl_create(struct sgx_encl *encl, struct sgx_secs *secs)
 	}
 
 	sgx_set_epc_page(&encl->secs, secs_epc);
-	encl->secs.encl = encl;
-	encl->secs.impl.ops = &sgx_encl_page_ops;
 	encl->tgid = get_pid(task_tgid(current));
 
 	ret = sgx_encl_grow(encl);

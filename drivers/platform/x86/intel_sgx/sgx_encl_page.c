@@ -186,12 +186,18 @@ static void sgx_encl_page_write(struct sgx_epc_page *epc_page)
 	up_read(&encl->mm->mmap_sem);
 }
 
+static bool sgx_encl_page_oom(struct sgx_epc_page *epc_page)
+{
+	return sgx_encl_oom(to_encl_page(epc_page)->encl);
+}
+
 const struct sgx_epc_page_ops sgx_encl_page_ops = {
 	.get = sgx_encl_page_get,
 	.put = sgx_encl_page_put,
 	.reclaim = sgx_encl_page_reclaim,
 	.block = sgx_encl_page_block,
 	.write = sgx_encl_page_write,
+	.oom = sgx_encl_page_oom,
 };
 
 /**
