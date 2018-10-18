@@ -81,11 +81,12 @@ static void sgx_reclaim_pages(void)
 		if (epc_page->impl->ops->reclaim(epc_page))
 			continue;
 
+		epc_page->impl->ops->put(epc_page);
+
 		spin_lock(&sgx_active_page_list_lock);
 		list_add_tail(&epc_page->list, &sgx_active_page_list);
 		spin_unlock(&sgx_active_page_list_lock);
 
-		epc_page->impl->ops->put(epc_page);
 		chunk[i] = NULL;
 	}
 
