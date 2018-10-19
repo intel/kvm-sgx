@@ -1111,9 +1111,7 @@ void sgx_encl_release(struct kref *ref)
 	encl->va_page_impl.ops = LIST_POISON1;
 
 	if (encl->mmu_notifier.ops) {
-		mmu_notifier_unregister_no_release(&encl->mmu_notifier,
-						   encl->mm);
-		mmu_notifier_synchronize();
+		mmu_notifier_unregister(&encl->mmu_notifier, encl->mm);
 		encl->mmu_notifier.ops = LIST_POISON1;
 	}
 
