@@ -55,6 +55,7 @@ static const struct cpuid_reg reverse_cpuid[] = {
 	[CPUID_7_ECX]         = {         7, 0, CPUID_ECX},
 	[CPUID_8000_0007_EBX] = {0x80000007, 0, CPUID_EBX},
 	[CPUID_7_EDX]         = {         7, 0, CPUID_EDX},
+	[CPUID_LNX_3]         = {      0x12, 0, CPUID_EAX},
 };
 
 static __always_inline struct cpuid_reg x86_feature_cpuid(unsigned x86_feature)
@@ -63,6 +64,7 @@ static __always_inline struct cpuid_reg x86_feature_cpuid(unsigned x86_feature)
 
 	BUILD_BUG_ON(x86_leaf >= ARRAY_SIZE(reverse_cpuid));
 	BUILD_BUG_ON(reverse_cpuid[x86_leaf].function == 0);
+	BUILD_BUG_ON(x86_leaf == CPUID_LNX_3 && (x86_feature & 31) > 1);
 
 	return reverse_cpuid[x86_leaf];
 }
@@ -89,6 +91,24 @@ static __always_inline int *guest_cpuid_get_register(struct kvm_vcpu *vcpu, unsi
 		BUILD_BUG();
 		return NULL;
 	}
+}
+
+/*
+ * Retrieve the bit from an X86_FEATURE_* definition using a simple AND to
+ * isolate the bit number from the feature definition.  Note that this works
+ * only for features that are NOT scattered, i.e. the X86_FEATURE_* bit number
+ * must match the hardware-defined CPUID bit number.  The only exception to
+ * this rule is the SGX sub-features leaf, which is scattered but only in the
+ * sense that its bits are relocated from hardware-defined leaf 0x12.0.EAX to
+ * Linux defined word 8 but its bit numbers are maintained (KVM asserts this
+ * expectation at build time).
+ */
+static __always_inline u32 bit(unsigned x86_feature)
+{
+	BUILD_BUG_ON((X86_FEATURE_SGX1 & 31) != 0);
+	BUILD_BUG_ON((X86_FEATURE_SGX2 & 31) != 1);
+
+	return 1 << (x86_feature & 31);
 }
 
 static __always_inline bool guest_cpuid_has(struct kvm_vcpu *vcpu, unsigned x86_feature)

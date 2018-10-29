@@ -31,6 +31,7 @@
 #include "tss.h"
 #include "mmu.h"
 #include "pmu.h"
+#include "cpuid.h"
 
 /*
  * Operand types
