@@ -818,6 +818,101 @@ int sgx_encl_init(struct sgx_encl *encl, struct sgx_sigstruct *sigstruct,
 	return ret;
 }
 
+static int sgx_encl_mod(struct sgx_encl_page *encl_page,
+			struct sgx_secinfo *secinfo, unsigned int op)
+{
+	struct sgx_encl *encl = encl_page->encl;
+	bool perm = (op == SGX_ENCLAVE_MODIFY_PERMISSIONS);
+	int ret;
+
+	if ((encl->flags & SGX_ENCL_DEAD) ||
+	    !(encl->flags & SGX_ENCL_INITIALIZED))
+		return -EINVAL;
+
+	sgx_encl_eblock(encl_page);
+
+	if (perm)
+		ret = __emodpr(secinfo, sgx_epc_addr(encl_page->epc_page));
+	else
+		ret = __emodt(secinfo, sgx_epc_addr(encl_page->epc_page));
+	SGX_INVD(ret, encl, "EMOD%s returned %d (0x%x)",
+		 perm ? "PR" : "T", ret, ret);
+	return ret;
+}
+
+/**
+ * sgx_enclave_modify_pages - modify a range of pages
+ * @encl:	an enclave
+ * @addr:	address in the ELRANGE
+ * @length:	length of the address range (must be multiple of the page size)
+ * @secinfo:	a modified SECINFO for the page
+ * @op:		a value of &sgx_enclave_modify_ops
+ *
+ * Modifies permissions or type for a range of pages. The enclave must
+ * acknowledge the modifications with EACCEPT. Initializes a new shootdown
+ * sequence after applying EMODPR/T operations.
+ *
+ * Return:
+ *   0 on success,
+ *   -errno otherwise
+ */
+int sgx_encl_modify_pages(struct sgx_encl *encl, unsigned long addr,
+			  unsigned long length, struct sgx_secinfo *secinfo,
+			  unsigned int op)
+{
+	struct sgx_encl_page *page;
+	struct vm_area_struct *vma;
+	int ret;
+
+	if (op != SGX_ENCLAVE_MODIFY_PERMISSIONS ||
+	    op != SGX_ENCLAVE_MODIFY_TYPES)
+		return -EINVAL;
+
+	if ((addr & (PAGE_SIZE - 1)) || (length & (PAGE_SIZE - 1)) ||
+	    addr < encl->base || length > encl->size)
+		return -EINVAL;
+
+	ret = sgx_validate_secinfo(secinfo);
+	if (ret)
+		return ret;
+
+	for ( ; addr < (addr + length); addr += PAGE_SIZE) {
+		ret = sgx_encl_find(encl->mm, addr, &vma);
+		if (!vma) {
+			ret = -EFAULT;
+			break;
+		}
+
+		down_read(&encl->mm->mmap_sem);
+
+		page = sgx_reserve_page(vma, addr);
+		if (IS_ERR(page)) {
+			ret = PTR_ERR(page);
+			up_read(&encl->mm->mmap_sem);
+			break;
+		}
+
+		ret = sgx_encl_mod(page, secinfo, op);
+
+		mutex_unlock(&encl->lock);
+		up_read(&encl->mm->mmap_sem);
+
+		if (ret)
+			break;
+	}
+
+	down_read(&encl->mm->mmap_sem);
+	mutex_lock(&encl->lock);
+	if (!(encl->flags & SGX_ENCL_DEAD) &&
+	    (encl->flags & SGX_ENCL_INITIALIZED)) {
+		sgx_flush_cpus(encl);
+		sgx_encl_etrack(encl);
+	}
+	mutex_unlock(&encl->lock);
+	up_read(&encl->mm->mmap_sem);
+	return ret;
+}
+
 static void sgx_encl_release_worker(struct work_struct *work)
 {
 	struct sgx_encl *encl = container_of(work, struct sgx_encl, work);
