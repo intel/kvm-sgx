@@ -10,6 +10,7 @@
 #include <linux/sched/mm.h>
 #include <linux/sched/signal.h>
 #include "encls.h"
+#include "driver.h"
 
 struct task_struct *ksgxswapd_tsk;
 

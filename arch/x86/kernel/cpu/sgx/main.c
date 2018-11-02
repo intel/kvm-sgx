@@ -8,6 +8,7 @@
 #include <linux/ratelimit.h>
 #include <linux/sched/signal.h>
 #include <linux/slab.h>
+#include "driver.h"
 #include "encls.h"
 
 struct sgx_epc_section sgx_epc_sections[SGX_MAX_EPC_SECTIONS];
@@ -193,6 +194,8 @@ static bool __init sgx_page_cache_init(void)
 
 static void __init sgx_init(void)
 {
+	int ret;
+
 	if (!boot_cpu_has(X86_FEATURE_SGX))
 		return;
 
@@ -202,10 +205,17 @@ static void __init sgx_init(void)
 	if (!sgx_page_reclaimer_init())
 		goto err_page_cache;
 
+	ret = sgx_drv_init();
+	if (ret)
+		goto err_kthread;
+
 	return;
+
+err_kthread:
+	kthread_stop(ksgxswapd_tsk);
 
 err_page_cache:
 	sgx_page_cache_teardown();
 }
 
-arch_initcall(sgx_init);
+device_initcall(sgx_init);
