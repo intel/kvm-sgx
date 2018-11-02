@@ -97,6 +97,8 @@ static void clear_sgx_caps(void)
 {
 	setup_clear_cpu_cap(X86_FEATURE_SGX);
 	setup_clear_cpu_cap(X86_FEATURE_SGX_LC);
+	setup_clear_cpu_cap(X86_FEATURE_SGX1);
+	setup_clear_cpu_cap(X86_FEATURE_SGX2);
 }
 
 static int __init nosgx(char *str)
