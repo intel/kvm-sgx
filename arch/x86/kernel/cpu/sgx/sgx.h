@@ -13,6 +13,7 @@
 
 struct sgx_epc_page {
 	unsigned long desc;
+	void *owner;
 	struct list_head list;
 };
 
@@ -42,9 +43,14 @@ extern struct sgx_epc_section sgx_epc_sections[SGX_MAX_EPC_SECTIONS];
  *				physical memory. The existing and near-future
  *				hardware defines at most eight sections, hence
  *				three bits to hold a section.
+ * %SGX_EPC_PAGE_RECLAIMABLE:	The page has been been marked as reclaimable.
+ *				Pages need to be colored this way because a page
+ *				can be out of the active page list in the
+ *				process of being swapped out.
  */
 enum sgx_epc_page_desc {
 	SGX_EPC_SECTION_MASK			= GENMASK_ULL(3, 0),
+	SGX_EPC_PAGE_RECLAIMABLE		= BIT(4),
 	/* bits 12-63 are reserved for the physical page address of the page */
 };
 
@@ -304,10 +310,17 @@ static inline int __emodt(struct sgx_secinfo *secinfo, void *addr)
 	return __encls_ret_2(SGX_EMODT, secinfo, addr);
 }
 
-struct sgx_epc_page *sgx_alloc_page(void);
+struct sgx_epc_page *sgx_alloc_page(void *owner, bool reclaim);
 int __sgx_free_page(struct sgx_epc_page *page);
 void sgx_free_page(struct sgx_epc_page *page);
 int sgx_einit(struct sgx_sigstruct *sigstruct, struct sgx_einittoken *token,
 	      struct sgx_epc_page *secs, u64 *lepubkeyhash);
+void sgx_page_reclaimable(struct sgx_epc_page *page);
+
+bool sgx_encl_page_get(struct sgx_epc_page *epc_page);
+void sgx_encl_page_put(struct sgx_epc_page *epc_page);
+bool sgx_encl_page_reclaim(struct sgx_epc_page *epc_page);
+void sgx_encl_page_block(struct sgx_epc_page *epc_page);
+void sgx_encl_page_write(struct sgx_epc_page *epc_page);
 
 #endif /* _X86_SGX_H */

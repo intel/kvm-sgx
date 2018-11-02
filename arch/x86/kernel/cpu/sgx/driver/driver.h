@@ -38,9 +38,21 @@
 #define SGX_EINIT_SLEEP_TIME	20
 #define SGX_VA_SLOT_COUNT	512
 
+#define SGX_VA_SLOT_COUNT 512
+
+struct sgx_va_page {
+	struct sgx_epc_page *epc_page;
+	DECLARE_BITMAP(slots, SGX_VA_SLOT_COUNT);
+	struct list_head list;
+};
+
 /**
  * enum sgx_encl_page_desc - defines bits for an enclave page's descriptor
  * %SGX_ENCL_PAGE_TCS:			The page is a TCS page.
+ * %SGX_ENCL_PAGE_RECLAIMED:		The page is in the process of being
+ *					reclaimed.
+ * %SGX_ENCL_PAGE_VA_OFFSET_MASK:	Holds the offset in the Version Array
+ *					(VA) page for a swapped page.
  * %SGX_ENCL_PAGE_ADDR_MASK:		Holds the virtual address of the page.
  *
  * The page address for SECS is zero and is used by the subsystem to recognize
@@ -49,6 +61,8 @@
 enum sgx_encl_page_desc {
 	SGX_ENCL_PAGE_TCS		= BIT(0),
 	/* Bits 11:3 are available when the page is not swapped. */
+	SGX_ENCL_PAGE_RECLAIMED		= BIT(3),
+	SGX_ENCL_PAGE_VA_OFFSET_MASK	= GENMASK_ULL(11, 3),
 	SGX_ENCL_PAGE_ADDR_MASK		= PAGE_MASK,
 };
 
@@ -60,6 +74,7 @@ enum sgx_encl_page_desc {
 struct sgx_encl_page {
 	unsigned long desc;
 	struct sgx_epc_page *epc_page;
+	struct sgx_va_page *va_page;
 	struct sgx_encl *encl;
 };
 
@@ -84,6 +99,7 @@ struct sgx_encl {
 	unsigned long base;
 	unsigned long size;
 	unsigned long ssaframesize;
+	struct list_head va_pages;
 	struct radix_tree_root page_tree;
 	struct list_head add_page_reqs;
 	struct work_struct work;
@@ -103,6 +119,18 @@ extern u32 sgx_xsave_size_tbl[64];
 extern int sgx_epcm_trapnr;
 
 extern const struct vm_operations_struct sgx_vm_ops;
+
+/* ENCLS wrappers. */
+
+static inline struct sgx_encl_page *to_encl_page(struct sgx_epc_page *epc_page)
+{
+	return (struct sgx_encl_page *)epc_page->owner;
+}
+
+void sgx_encl_eblock(struct sgx_encl_page *encl_page);
+void sgx_encl_etrack(struct sgx_encl *encl);
+void sgx_encl_ewb(struct sgx_epc_page *epc_page, bool do_free);
+struct sgx_epc_page *sgx_encl_eldu(struct sgx_encl_page *encl_page);
 
 int sgx_encl_find(struct mm_struct *mm, unsigned long addr,
 		  struct vm_area_struct **vma);
@@ -146,8 +174,6 @@ int sgx_encl_add_page(struct sgx_encl *encl, unsigned long addr, void *data,
 		      struct sgx_secinfo *secinfo, unsigned int mrmask);
 int sgx_encl_init(struct sgx_encl *encl, struct sgx_sigstruct *sigstruct,
 		  struct sgx_einittoken *einittoken);
-void sgx_encl_block(struct sgx_encl_page *encl_page);
-void sgx_encl_track(struct sgx_encl *encl);
 void sgx_encl_release(struct kref *ref);
 pgoff_t sgx_encl_get_index(struct sgx_encl *encl, struct sgx_encl_page *page);
 
@@ -161,6 +187,10 @@ struct sgx_encl_page *sgx_fault_page(struct vm_area_struct *vma,
 
 int sgx_test_and_clear_young(struct sgx_encl_page *page);
 void sgx_flush_cpus(struct sgx_encl *encl);
+struct sgx_epc_page *sgx_alloc_va_page(void);
+unsigned int sgx_alloc_va_slot(struct sgx_va_page *va_page);
+void sgx_free_va_slot(struct sgx_va_page *va_page, unsigned int offset);
+bool sgx_va_page_full(struct sgx_va_page *va_page);
 
 extern const struct file_operations sgx_fs_provision_fops;
 

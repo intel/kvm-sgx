@@ -53,6 +53,19 @@ int sgx_encl_find(struct mm_struct *mm, unsigned long addr,
 	return encl ? 0 : -ENOENT;
 }
 
+static void sgx_free_va_pages(struct sgx_encl *encl)
+{
+	struct sgx_va_page *va_page;
+
+	while (!list_empty(&encl->va_pages)) {
+		va_page = list_first_entry(&encl->va_pages, struct sgx_va_page,
+					   list);
+		list_del(&va_page->list);
+		sgx_free_page(va_page->epc_page);
+		kfree(va_page);
+	}
+}
+
 /**
  * sgx_invalidate - kill an enclave
  * @encl:	an &sgx_encl instance
@@ -87,7 +100,12 @@ void sgx_invalidate(struct sgx_encl *encl, bool flush_cpus)
 
 	radix_tree_for_each_slot(slot, &encl->page_tree, &iter, 0) {
 		entry = *slot;
-		if (entry->epc_page) {
+		/*
+		 * If the page has RECLAIMED set, the reclaimer effectively
+		 * owns the page, i.e. we need to let the reclaimer free it.
+		 */
+		if (entry->epc_page &&
+		    !(entry->desc & SGX_ENCL_PAGE_RECLAIMED)) {
 			if (!__sgx_free_page(entry->epc_page)) {
 				encl->secs_child_cnt--;
 				entry->epc_page = NULL;
@@ -99,6 +117,7 @@ void sgx_invalidate(struct sgx_encl *encl, bool flush_cpus)
 		sgx_free_page(encl->secs.epc_page);
 		encl->secs.epc_page = NULL;
 	}
+	sgx_free_va_pages(encl);
 }
 
 static bool sgx_process_add_page_req(struct sgx_add_page_req *req,
@@ -164,6 +183,7 @@ static bool sgx_process_add_page_req(struct sgx_add_page_req *req,
 	encl_page->epc_page = epc_page;
 	encl->secs_child_cnt++;
 	sgx_test_and_clear_young(encl_page);
+	sgx_page_reclaimable(encl_page->epc_page);
 
 	return true;
 }
@@ -194,7 +214,7 @@ static void sgx_add_page_worker(struct work_struct *work)
 		if (skip_rest)
 			goto next;
 
-		epc_page = sgx_alloc_page();
+		epc_page = sgx_alloc_page(req->encl_page, true);
 		down_read(&encl->mm->mmap_sem);
 		mutex_lock(&encl->lock);
 
@@ -289,6 +309,51 @@ static const struct mmu_notifier_ops sgx_mmu_notifier_ops = {
 	.release	= sgx_mmu_notifier_release,
 };
 
+static int sgx_encl_grow(struct sgx_encl *encl)
+{
+	struct sgx_va_page *va_page;
+	int ret;
+
+	BUILD_BUG_ON(SGX_VA_SLOT_COUNT !=
+		(SGX_ENCL_PAGE_VA_OFFSET_MASK >> 3) + 1);
+
+	mutex_lock(&encl->lock);
+	if (encl->flags & SGX_ENCL_DEAD) {
+		mutex_unlock(&encl->lock);
+		return -EFAULT;
+	}
+
+	if (!(encl->page_cnt % SGX_VA_SLOT_COUNT)) {
+		mutex_unlock(&encl->lock);
+
+		va_page = kzalloc(sizeof(*va_page), GFP_KERNEL);
+		if (!va_page)
+			return -ENOMEM;
+		va_page->epc_page = sgx_alloc_va_page();
+		if (IS_ERR(va_page->epc_page)) {
+			ret = PTR_ERR(va_page->epc_page);
+			kfree(va_page);
+			return ret;
+		}
+
+		mutex_lock(&encl->lock);
+		if (encl->flags & SGX_ENCL_DEAD) {
+			sgx_free_page(va_page->epc_page);
+			kfree(va_page);
+			mutex_unlock(&encl->lock);
+			return -EFAULT;
+		} else if (encl->page_cnt % SGX_VA_SLOT_COUNT) {
+			sgx_free_page(va_page->epc_page);
+			kfree(va_page);
+		} else {
+			list_add(&va_page->list, &encl->va_pages);
+		}
+	}
+	encl->page_cnt++;
+	mutex_unlock(&encl->lock);
+	return 0;
+}
+
 /**
  * sgx_encl_alloc - allocate memory for an enclave and set attributes
  *
@@ -304,6 +369,7 @@ static const struct mmu_notifier_ops sgx_mmu_notifier_ops = {
  */
 struct sgx_encl *sgx_encl_alloc(struct sgx_secs *secs)
 {
+	unsigned long backing_size = secs->size + PAGE_SIZE;
 	unsigned long ssaframesize;
 	struct sgx_encl *encl;
 	unsigned long backing;
@@ -313,23 +379,24 @@ struct sgx_encl *sgx_encl_alloc(struct sgx_secs *secs)
 	if (sgx_validate_secs(secs, ssaframesize))
 		return ERR_PTR(-EINVAL);
 
-	backing = vm_mmap(NULL, 0, secs->size + PAGE_SIZE,
+	backing = vm_mmap(NULL, 0, backing_size + (backing_size >> 5),
 			  PROT_READ | PROT_WRITE, MAP_PRIVATE, 0);
 	if (IS_ERR((void *)backing)) {
 		ret = PTR_ERR((void *)backing);
-		goto out_err;
+		goto err_backing;
 	}
 
 	encl = kzalloc(sizeof(*encl), GFP_KERNEL);
 	if (!encl) {
 		ret = -ENOMEM;
-		goto out_backing;
+		goto err_alloc;
 	}
 
 	encl->secs_attributes = secs->attributes;
 	encl->allowed_attributes = SGX_ATTR_ALLOWED_MASK;
 	kref_init(&encl->refcount);
 	INIT_LIST_HEAD(&encl->add_page_reqs);
+	INIT_LIST_HEAD(&encl->va_pages);
 	INIT_RADIX_TREE(&encl->page_tree, GFP_KERNEL);
 	mutex_init(&encl->lock);
 	INIT_WORK(&encl->work, sgx_add_page_worker);
@@ -341,10 +408,10 @@ struct sgx_encl *sgx_encl_alloc(struct sgx_secs *secs)
 
 	return encl;
 
-out_backing:
-	vm_munmap((unsigned long)backing, secs->size + PAGE_SIZE);
+err_alloc:
+	vm_munmap((unsigned long)backing, backing_size + (backing_size >> 5));
 
-out_err:
+err_backing:
 	return ERR_PTR(ret);
 }
 
@@ -385,7 +452,7 @@ int sgx_encl_create(struct sgx_encl *encl, struct sgx_secs *secs)
 	struct sgx_epc_page *secs_epc;
 	long ret;
 
-	secs_epc = sgx_alloc_page();
+	secs_epc = sgx_alloc_page(&encl->secs, true);
 	if (IS_ERR(secs_epc)) {
 		ret = PTR_ERR(secs_epc);
 		return ret;
@@ -394,6 +461,10 @@ int sgx_encl_create(struct sgx_encl *encl, struct sgx_secs *secs)
 	encl->secs.encl = encl;
 	encl->secs.epc_page = secs_epc;
 	encl->tgid = get_pid(task_tgid(current));
+
+	ret = sgx_encl_grow(encl);
+	if (ret)
+		return ret;
 
 	pginfo.addr = 0;
 	pginfo.contents = (unsigned long)secs;
@@ -615,6 +686,10 @@ int sgx_encl_add_page(struct sgx_encl *encl, unsigned long addr, void *data,
 			return ret;
 	}
 
+	ret = sgx_encl_grow(encl);
+	if (ret)
+		return ret;
+
 	down_read(&current->mm->mmap_sem);
 	mutex_lock(&encl->lock);
 
@@ -748,10 +823,10 @@ static void sgx_encl_release_worker(struct work_struct *work)
 	struct sgx_encl *encl = container_of(work, struct sgx_encl, work);
 	unsigned long backing_size = encl->size + PAGE_SIZE;
 
-	if (encl->flags & SGX_ENCL_MM_RELEASED) {
+	if (!(encl->flags & SGX_ENCL_MM_RELEASED)) {
 		down_write(&encl->mm->mmap_sem);
-		do_munmap(encl->mm, (unsigned long)encl->backing, backing_size,
-			  NULL);
+		do_munmap(encl->mm, (unsigned long)encl->backing, backing_size +
+			  (backing_size >> 5), NULL);
 		up_write(&encl->mm->mmap_sem);
 	}
 
