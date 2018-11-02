@@ -184,6 +184,8 @@ long sgx_compat_ioctl(struct file *filep, unsigned int cmd, unsigned long arg);
 
 struct sgx_encl_page *sgx_fault_page(struct vm_area_struct *vma,
 				     unsigned long addr);
+struct sgx_encl_page *sgx_reserve_page(struct vm_area_struct *vma,
+				       unsigned long addr);
 
 int sgx_test_and_clear_young(struct sgx_encl_page *page);
 void sgx_flush_cpus(struct sgx_encl *encl);

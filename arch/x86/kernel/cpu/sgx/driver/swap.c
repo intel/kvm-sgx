@@ -39,6 +39,7 @@ bool sgx_encl_page_reclaim(struct sgx_epc_page *epc_page)
 		ret = true;
 	else
 		ret = !sgx_test_and_clear_young(encl_page);
+
 	if (ret)
 		encl_page->desc |= SGX_ENCL_PAGE_RECLAIMED;
 

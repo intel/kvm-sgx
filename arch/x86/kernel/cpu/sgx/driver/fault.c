@@ -5,14 +5,20 @@
 #include <linux/sched/mm.h>
 #include "driver.h"
 
-static struct sgx_encl_page *sgx_try_fault_page(struct vm_area_struct *vma,
-						unsigned long addr)
+struct sgx_encl_page *sgx_fault_page(struct vm_area_struct *vma,
+				     unsigned long addr)
 {
 	struct sgx_encl *encl = vma->vm_private_data;
 	struct sgx_epc_page *epc_page;
 	struct sgx_encl_page *entry;
 	unsigned long pfn;
 	int rc = 0;
+
+	/* If process was forked, VMA is still there but vm_private_data is set
+	 * to NULL.
+	 */
+	if (!encl)
+		return ERR_PTR(-EFAULT);
 
 	if ((encl->flags & SGX_ENCL_DEAD) ||
 	    !(encl->flags & SGX_ENCL_INITIALIZED))
@@ -32,8 +38,8 @@ static struct sgx_encl_page *sgx_try_fault_page(struct vm_area_struct *vma,
 
 		if (follow_pfn(vma, addr, &pfn))
 			goto out_pfn;
-		else
-			return entry;
+
+		return entry;
 	}
 
 	if (!(encl->secs.epc_page)) {
@@ -60,21 +66,24 @@ out_pfn:
 	return entry;
 }
 
-struct sgx_encl_page *sgx_fault_page(struct vm_area_struct *vma,
-				     unsigned long addr)
+struct sgx_encl_page *sgx_reserve_page(struct vm_area_struct *vma,
+				       unsigned long addr)
 {
 	struct sgx_encl *encl = vma->vm_private_data;
 	struct sgx_encl_page *entry;
 
-	/* If process was forked, VMA is still there but vm_private_data is set
-	 * to NULL.
-	 */
-	if (!encl)
-		return ERR_PTR(-EFAULT);
+	for ( ; ; ) {
+		mutex_lock(&encl->lock);
 
-	mutex_lock(&encl->lock);
-	entry = sgx_try_fault_page(vma, addr);
-	mutex_unlock(&encl->lock);
+		entry = sgx_fault_page(vma, addr);
+		if (PTR_ERR(entry) != -EBUSY)
+			break;
+
+		mutex_unlock(&encl->lock);
+	}
+
+	if (IS_ERR(entry))
+		mutex_unlock(&encl->lock);
 
 	return entry;
 }
