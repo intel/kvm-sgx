@@ -23,6 +23,8 @@ static struct sgx_epc_page *__sgx_try_alloc_page(struct sgx_epc_section *section
 
 	page = list_first_entry(&section->page_list, struct sgx_epc_page, list);
 	list_del_init(&page->list);
+	section->free_cnt--;
+
 	return page;
 }
 
@@ -55,15 +57,70 @@ struct sgx_epc_page *sgx_try_alloc_page(void)
 }
 
 /**
+ * sgx_alloc_page() - Allocate an EPC page
+ * @owner:	the owner of the EPC page
+ * @reclaim:	reclaim pages if necessary
+ *
+ * Try to grab a page from the free EPC page list. If there is a free page
+ * available, it is returned to the caller. The @reclaim parameter hints
+ * the EPC memory manager to swap pages when required.
+ *
+ * Return:
+ *   a pointer to a &struct sgx_epc_page instance,
+ *   -errno on error
+ */
+struct sgx_epc_page *sgx_alloc_page(void *owner, bool reclaim)
+{
+	struct sgx_epc_page *entry;
+
+	for ( ; ; ) {
+		entry = sgx_try_alloc_page();
+		if (!IS_ERR(entry)) {
+			entry->owner = owner;
+			break;
+		}
+
+		if (list_empty(&sgx_active_page_list))
+			return ERR_PTR(-ENOMEM);
+
+		if (!reclaim) {
+			entry = ERR_PTR(-EBUSY);
+			break;
+		}
+
+		if (signal_pending(current)) {
+			entry = ERR_PTR(-ERESTARTSYS);
+			break;
+		}
+
+		sgx_reclaim_pages();
+		schedule();
+	}
+
+	if (sgx_should_reclaim(SGX_NR_LOW_PAGES))
+		wake_up(&ksgxswapd_waitq);
+
+	return entry;
+}
+
+/**
  * sgx_free_page() - Free an EPC page
  * @page:	pointer a previously allocated EPC page
  *
- * EREMOVE an EPC page and insert it back to the list of free pages.
+ * EREMOVE an EPC page and insert it back to the list of free pages. The page
+ * must not be reclaimable.
  */
 void sgx_free_page(struct sgx_epc_page *page)
 {
 	struct sgx_epc_section *section = sgx_epc_section(page);
 	int ret;
+
+	/*
+	 * Don't take sgx_active_page_list_lock when asserting the page isn't
+	 * reclaimable, missing a WARN in the very rare case is preferable to
+	 * unnecessarily taking a global lock in the common case.
+	 */
+	WARN_ON_ONCE(page->desc & SGX_EPC_PAGE_RECLAIMABLE);
 
 	ret = __eremove(sgx_epc_addr(page));
 	if (WARN_ONCE(ret, "EREMOVE returned %d (0x%x)", ret, ret))
@@ -71,6 +128,7 @@ void sgx_free_page(struct sgx_epc_page *page)
 
 	spin_lock(&section->lock);
 	list_add_tail(&page->list, &section->page_list);
+	section->free_cnt++;
 	spin_unlock(&section->lock);
 }
 
@@ -121,6 +179,7 @@ static bool __init sgx_alloc_epc_section(u64 addr, u64 size,
 		list_add_tail(&page->list, &section->unsanitized_page_list);
 	}
 
+	section->free_cnt = nr_pages;
 	return true;
 
 err_out:
