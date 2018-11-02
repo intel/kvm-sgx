@@ -1929,9 +1929,15 @@ config INTEL_SGX_CORE
 	bool "Intel SGX core functionality"
 	depends on X86_64 && CPU_SUP_INTEL
 	help
-	Intel Software Guard eXtensions (SGX) CPU feature that allows ring 3
-	applications to create enclaves: private regions of memory that are
-	architecturally protected from unauthorized access and/or modification.
+	Intel(R) SGX is a set of CPU instructions that can be used by
+	applications to set aside private regions of code and data.  The code
+	outside the enclave is disallowed to access the memory inside the
+	enclave by the CPU access control.
+
+	The firmware uses PRMRR registers to reserve an area of physical memory
+	called Enclave Page Cache (EPC). There is a hardware unit in the
+	processor called Memory Encryption Engine. The MEE encrypts and decrypts
+	the EPC pages as they enter and leave the processor package.
 
 	This option enables kernel recognition of SGX, high-level management
 	of the Enclave Page Cache (EPC), tracking and writing of SGX Launch
@@ -1941,6 +1947,21 @@ config INTEL_SGX_CORE
 	For details, see Documentation/x86/intel_sgx.rst
 
 	If unsure, say N.
+
+config INTEL_SGX_DRIVER
+	bool "Intel(R) SGX Driver"
+	depends on X86_64 && CPU_SUP_INTEL && INTEL_SGX_CORE
+	select MMU_NOTIFIER
+	select CRYPTO
+	select CRYPTO_SHA256
+	help
+	This options enables the kernel SGX driver that allows to construct
+	enclaves to the process memory by using a device node (by default
+	/dev/sgx) and a set of ioctls. The driver requires that the MSRs
+	specifying the public key hash for the launch enclave are writable so
+	that Linux has the full control to run enclaves.
+
+	For details, see Documentation/x86/intel_sgx.rst
 
 config EFI
 	bool "EFI runtime service support"
