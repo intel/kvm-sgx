@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
+
+SUBDIRS_64 := sgx
+
 all:
 
 include ../lib.mk
@@ -66,6 +69,13 @@ endif
 all_32: $(BINARIES_32)
 
 all_64: $(BINARIES_64)
+
+all_64: $(SUBDIRS_64)
+	@for DIR in $(SUBDIRS_64); do			\
+		BUILD_TARGET=$(OUTPUT)/$$DIR;		\
+		mkdir $$BUILD_TARGET  -p;		\
+		make OUTPUT=$$BUILD_TARGET -C $$DIR $@;	\
+	done
 
 EXTRA_CLEAN := $(BINARIES_32) $(BINARIES_64)
 
