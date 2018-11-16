@@ -109,4 +109,22 @@ struct sgx_enclave_modify_pages {
 	__u8	op;
 } __attribute__((__packed__));
 
+/**
+ * struct sgx_enclave_exception - structure to report exceptions encountered in
+ *				  __vdso_sgx_enter_enclave
+ *
+ * @leaf:	ENCLU leaf from %rax at time of exception
+ * @trapnr:	exception trap number, a.k.a. fault vector
+ * @error_cdde:	exception error code
+ * @address:	exception address, e.g. CR2 on a #PF
+ * @reserved:	reserved for future use
+ */
+struct sgx_enclave_exception {
+	__u32 leaf;
+	__u16 trapnr;
+	__u16 error_code;
+	__u64 address;
+	__u64 reserved[2];
+};
+
 #endif /* _UAPI_ASM_X86_SGX_H */
