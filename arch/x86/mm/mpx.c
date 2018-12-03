@@ -882,7 +882,7 @@ static int mpx_unmap_tables(struct mm_struct *mm,
  * necessary, and the 'vma' is the first vma in this range (start -> end).
  */
 void mpx_notify_unmap(struct mm_struct *mm, struct vm_area_struct *vma,
-		unsigned long start, unsigned long end)
+		      unsigned long start, unsigned long end)
 {
 	int ret;
 
@@ -890,7 +890,7 @@ void mpx_notify_unmap(struct mm_struct *mm, struct vm_area_struct *vma,
 	 * Refuse to do anything unless userspace has asked
 	 * the kernel to help manage the bounds tables,
 	 */
-	if (!kernel_managing_mpx_tables(current->mm))
+	if (!kernel_managing_mpx_tables(mm))
 		return;
 	/*
 	 * This will look across the entire 'start -> end' range,
