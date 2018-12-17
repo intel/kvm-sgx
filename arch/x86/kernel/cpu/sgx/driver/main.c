@@ -181,6 +181,10 @@ static int sgx_drv_init(struct device *parent)
 	if (!sgx_encl_wq)
 		return -ENOMEM;
 
+	ret = sgx_fs_init(&sgx_dev->ctrl_dev);
+	if (ret)
+		goto err_fs_init;
+
 	ret = cdev_device_add(&sgx_dev->ctrl_cdev, &sgx_dev->ctrl_dev);
 	if (ret)
 		goto err_device_add;
@@ -188,6 +192,9 @@ static int sgx_drv_init(struct device *parent)
 	return 0;
 
 err_device_add:
+	sgx_fs_remove();
+
+err_fs_init:
 	destroy_workqueue(sgx_encl_wq);
 	return ret;
 }

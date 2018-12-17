@@ -162,4 +162,9 @@ struct sgx_encl_page *sgx_fault_page(struct vm_area_struct *vma,
 int sgx_test_and_clear_young(struct sgx_encl_page *page);
 void sgx_flush_cpus(struct sgx_encl *encl);
 
+extern const struct file_operations sgx_fs_provision_fops;
+
+int sgx_fs_init(struct device *dev);
+void sgx_fs_remove(void);
+
 #endif /* __ARCH_X86_INTEL_SGX_H__ */

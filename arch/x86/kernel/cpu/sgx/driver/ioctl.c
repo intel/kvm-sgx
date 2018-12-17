@@ -193,6 +193,46 @@ out:
 	return ret;
 }
 
+/**
+ * sgx_ioc_enclave_set_attribute - handler for %SGX_IOC_ENCLAVE_SET_ATTRIBUTE
+ * @filep:	open file to /dev/sgx
+ * @cmd:	the command value
+ * @arg:	pointer to a struct sgx_enclave_set_attribute instance
+ *
+ * Sets an attribute matching the attribute file that is pointed by the
+ * parameter structure field attribute_fd.
+ *
+ * Return: 0 on success, -errno otherwise
+ */
+static long sgx_ioc_enclave_set_attribute(struct file *filep, unsigned int cmd,
+					  unsigned long arg)
+{
+	struct sgx_enclave_set_attribute *params = (void *)arg;
+	struct file *attribute_file;
+	struct sgx_encl *encl;
+	int ret;
+
+	attribute_file = fget(params->attribute_fd);
+	if (!attribute_file->f_op)
+		return -EINVAL;
+
+	if (attribute_file->f_op != &sgx_fs_provision_fops) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	ret = sgx_encl_get(params->addr, &encl);
+	if (ret)
+		goto out;
+
+	encl->allowed_attributes |= SGX_ATTR_PROVISIONKEY;
+	kref_put(&encl->refcount, sgx_encl_release);
+
+out:
+	fput(attribute_file);
+	return ret;
+}
+
 typedef long (*sgx_ioc_t)(struct file *filep, unsigned int cmd,
 			  unsigned long arg);
 
@@ -211,6 +251,9 @@ long sgx_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 		break;
 	case SGX_IOC_ENCLAVE_INIT:
 		handler = sgx_ioc_enclave_init;
+		break;
+	case SGX_IOC_ENCLAVE_SET_ATTRIBUTE:
+		handler = sgx_ioc_enclave_set_attribute;
 		break;
 	default:
 		return -ENOIOCTLCMD;
