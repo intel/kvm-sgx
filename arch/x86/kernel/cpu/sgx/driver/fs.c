@@ -1,24 +1,18 @@
 // SPDX-License-Identifier: (GPL-2.0 OR BSD-3-Clause)
 // Copyright(c) 2016-18 Intel Corporation.
 
-#include <linux/acpi.h>
-#include <linux/cdev.h>
-#include <linux/platform_device.h>
 #include <linux/security.h>
-#include <linux/suspend.h>
-#include <asm/traps.h>
-#include "driver.h"
 
 const struct file_operations sgx_fs_provision_fops;
 
 static struct dentry *sgx_fs;
 static struct dentry *sgx_fs_provision;
 
-int sgx_fs_init(struct device *dev)
+int sgx_fs_init(const char *name)
 {
 	int ret;
 
-	sgx_fs = securityfs_create_dir(dev_name(dev), NULL);
+	sgx_fs = securityfs_create_dir(name, NULL);
 	if (IS_ERR(sgx_fs)) {
 		ret = PTR_ERR(sgx_fs);
 		goto err_sgx_fs;

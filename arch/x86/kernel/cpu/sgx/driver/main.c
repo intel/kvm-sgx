@@ -181,7 +181,7 @@ static int sgx_drv_init(struct device *parent)
 		goto err_ctx_alloc;
 	}
 
-	ret = sgx_fs_init(&sgx_dev->ctrl_dev);
+	ret = sgx_fs_init(dev_name(&sgx_dev->ctrl_dev));
 	if (ret)
 		goto err_ctx_alloc;
 
