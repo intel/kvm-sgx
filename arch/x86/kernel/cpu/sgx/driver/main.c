@@ -67,16 +67,10 @@ static const struct file_operations sgx_ctrl_fops = {
 	.get_unmapped_area	= sgx_get_unmapped_area,
 };
 
-static struct bus_type sgx_bus_type = {
-	.name	= "sgx",
-};
-
 struct sgx_dev_ctx {
 	struct device ctrl_dev;
 	struct cdev ctrl_cdev;
 };
-
-static dev_t sgx_devt;
 
 static void sgx_dev_release(struct device *dev)
 {
@@ -232,48 +226,14 @@ static struct platform_driver sgx_drv = {
 	},
 };
 
-static int __init sgx_drv_subsys_init(void)
-{
-	int ret;
-
-	ret = bus_register(&sgx_bus_type);
-	if (ret)
-		return ret;
-
-	ret = alloc_chrdev_region(&sgx_devt, 0, SGX_DRV_NR_DEVICES, "sgx");
-	if (ret < 0) {
-		bus_unregister(&sgx_bus_type);
-		return ret;
-	}
-
-	return 0;
-}
-
-static void sgx_drv_subsys_exit(void)
-{
-	bus_unregister(&sgx_bus_type);
-	unregister_chrdev_region(sgx_devt, SGX_DRV_NR_DEVICES);
-}
-
 static int __init sgx_init(void)
 {
-	int ret;
-
-	ret = sgx_drv_subsys_init();
-	if (ret)
-		return ret;
-
-	ret = platform_driver_register(&sgx_drv);
-	if (ret)
-		sgx_drv_subsys_exit();
-
-	return ret;
+	return platform_driver_register(&sgx_drv);
 }
 module_init(sgx_init);
 
 static void __exit sgx_exit(void)
 {
 	platform_driver_unregister(&sgx_drv);
-	sgx_drv_subsys_exit();
 }
 module_exit(sgx_exit);

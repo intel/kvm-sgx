@@ -3,6 +3,7 @@
 #define _X86_SGX_H
 
 #include <linux/bitops.h>
+#include <linux/device.h>
 #include <linux/err.h>
 #include <linux/io.h>
 #include <linux/rwsem.h>
@@ -12,6 +13,9 @@
 #include "sgx_arch.h"
 
 extern const struct file_operations sgx_fs_provision_fops;
+
+extern struct bus_type sgx_bus_type;
+extern dev_t sgx_devt;
 
 struct sgx_epc_page {
 	unsigned long desc;

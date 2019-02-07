@@ -32,7 +32,6 @@
 #define sgx_crit(encl, fmt, ...) \
 	sgx_pr(crit, encl, fmt, ##__VA_ARGS__)
 
-#define SGX_DRV_NR_DEVICES	1
 #define SGX_EINIT_SPIN_COUNT	20
 #define SGX_EINIT_SLEEP_COUNT	50
 #define SGX_EINIT_SLEEP_TIME	20

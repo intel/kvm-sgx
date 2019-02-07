@@ -10,6 +10,13 @@
 #include <linux/slab.h>
 #include "sgx.h"
 
+struct bus_type sgx_bus_type = {
+	.name	= "sgx",
+};
+dev_t sgx_devt;
+
+#define SGX_MAX_NR_DEVICES	1
+
 /**
  * enum sgx_swap_constants - the constants used by the swapping code
  * %SGX_NR_TO_SCAN:	the number of pages to scan in a single round
@@ -492,8 +499,21 @@ static __init int sgx_init(void)
 	}
 	ksgxswapd_tsk = tsk;
 
+	ret = bus_register(&sgx_bus_type);
+	if (ret)
+		goto err_bus;
+
+	ret = alloc_chrdev_region(&sgx_devt, 0, SGX_MAX_NR_DEVICES, "sgx");
+	if (ret < 0)
+		goto err_chrdev;
+
 	return 0;
 
+err_chrdev:
+	bus_unregister(&sgx_bus_type);
+err_bus:
+	kthread_stop(ksgxswapd_tsk);
+	ksgxswapd_tsk = NULL;
 err_kthread:
 	sgx_page_cache_teardown();
 err_page_cache:
