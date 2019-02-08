@@ -21,7 +21,9 @@ struct sgx_device {
 	struct cdev cdev;
 };
 
-#define SGX_MAX_NR_DEVICES	1
+static int sgx_nr_devices;
+
+#define SGX_MAX_NR_DEVICES	2
 
 /**
  * enum sgx_swap_constants - the constants used by the swapping code
@@ -499,7 +501,7 @@ int sgx_device_alloc(const char *name, const struct file_operations *fops)
 	device_initialize(&sgx_dev->dev);
 
 	sgx_dev->dev.class = &sgx_subsys;
-	sgx_dev->dev.devt = MKDEV(MAJOR(sgx_devt), 0);
+	sgx_dev->dev.devt = MKDEV(MAJOR(sgx_devt), sgx_nr_devices);
 	sgx_dev->dev.release = sgx_dev_release;
 
 	ret = dev_set_name(&sgx_dev->dev, name);
@@ -512,6 +514,8 @@ int sgx_device_alloc(const char *name, const struct file_operations *fops)
 	ret = cdev_device_add(&sgx_dev->cdev, &sgx_dev->dev);
 	if (ret)
 		goto out_error;
+
+	sgx_nr_devices++;
 
 	return 0;
 
@@ -552,6 +556,9 @@ static __init int sgx_init(void)
 		goto err_chrdev;
 
 	ret = sgx_encl_drv_probe();
+#if IS_ENABLED(CONFIG_KVM_INTEL)
+	ret = sgx_virt_driver_probe() ? ret : 0;
+#endif
 	if (ret)
 		goto err_encl_drv;
 

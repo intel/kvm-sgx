@@ -23,6 +23,9 @@
 #define SGX_IOC_ENCLAVE_MODIFY_PAGES \
 	_IOW(SGX_MAGIC, 0x05, struct sgx_enclave_modify_pages)
 
+#define SGX_VIRT_EPC_CREATE \
+	_IOW(SGX_MAGIC, 0x80, struct sgx_virt_epc_create)
+
 /* IOCTL return values */
 #define SGX_POWER_LOST_ENCLAVE		0x40000000
 
@@ -108,6 +111,18 @@ struct sgx_enclave_modify_pages {
 	__u64	secinfo;
 	__u8	op;
 } __attribute__((__packed__));
+
+/**
+ * struct sgx_virt_epc_create - parameter structure for the
+ *				%SGX_VIRT_EPC_CREATE ioctl
+ *
+ * @size:		size, in bytes, of the virtual EPC
+ * @attribute_fd:	file handle to the securityfs attribute file
+ */
+struct sgx_virt_epc_create  {
+	__u64	size;
+	__u64	attribute_fd;
+};
 
 /**
  * struct sgx_enclave_exception - structure to report exceptions encountered in
