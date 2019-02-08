@@ -89,6 +89,7 @@ static void sgx_dev_release(struct device *dev)
 static struct sgx_dev_ctx *sgx_dev_ctx_alloc(struct device *parent)
 {
 	struct sgx_dev_ctx *ctx;
+	int ret;
 
 	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
@@ -101,7 +102,11 @@ static struct sgx_dev_ctx *sgx_dev_ctx_alloc(struct device *parent)
 	ctx->ctrl_dev.devt = MKDEV(MAJOR(sgx_devt), 0);
 	ctx->ctrl_dev.release = sgx_dev_release;
 
-	dev_set_name(&ctx->ctrl_dev, "sgx");
+	ret = dev_set_name(&ctx->ctrl_dev, "sgx");
+	if (ret) {
+		put_device(&ctx->ctrl_dev);
+		return ERR_PTR(ret);
+	}
 
 	cdev_init(&ctx->ctrl_cdev, &sgx_ctrl_fops);
 	ctx->ctrl_cdev.owner = THIS_MODULE;
