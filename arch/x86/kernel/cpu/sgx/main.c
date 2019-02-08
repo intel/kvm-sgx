@@ -382,6 +382,7 @@ static __init int sgx_init_epc_section(u64 addr, u64 size, unsigned long index,
 		return -ENOMEM;
 
 	section->pa = addr;
+	section->free_cnt = 0;
 	spin_lock_init(&section->lock);
 	INIT_LIST_HEAD(&section->page_list);
 
@@ -410,6 +411,8 @@ static __init void sgx_page_cache_teardown(void)
 
 	for (i = 0; i < sgx_nr_epc_sections; i++)
 		sgx_free_epc_section(&sgx_epc_sections[i]);
+
+	sgx_nr_epc_sections = 0;
 }
 
 /**
