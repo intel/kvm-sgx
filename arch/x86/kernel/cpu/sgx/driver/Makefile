@@ -3,7 +3,6 @@ sgx-$(CONFIG_INTEL_SGX_DRIVER) += \
 	encl.o \
 	encls.o \
 	fault.o \
-	fs.o \
 	ioctl.o \
 	main.o \
 	pte.o \

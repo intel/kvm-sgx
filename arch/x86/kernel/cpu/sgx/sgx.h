@@ -11,6 +11,8 @@
 #include <uapi/asm/sgx_errno.h>
 #include "sgx_arch.h"
 
+extern const struct file_operations sgx_fs_provision_fops;
+
 struct sgx_epc_page {
 	unsigned long desc;
 	void *owner;
@@ -309,6 +311,9 @@ static inline int __emodt(struct sgx_secinfo *secinfo, void *addr)
 {
 	return __encls_ret_2(SGX_EMODT, secinfo, addr);
 }
+
+int sgx_fs_init(const char *name);
+void sgx_fs_remove(void);
 
 struct sgx_epc_page *sgx_alloc_page(void *owner, bool reclaim);
 int __sgx_free_page(struct sgx_epc_page *page);

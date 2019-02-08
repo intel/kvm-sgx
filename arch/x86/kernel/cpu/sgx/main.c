@@ -477,18 +477,28 @@ static __init int sgx_init(void)
 	if (!boot_cpu_has(X86_FEATURE_SGX))
 		return false;
 
-	ret = sgx_page_cache_init();
+	ret = sgx_fs_init("sgx");
 	if (ret)
 		return ret;
 
+	ret = sgx_page_cache_init();
+	if (ret)
+		goto err_page_cache;
+
 	tsk = kthread_run(ksgxswapd, NULL, "ksgxswapd");
 	if (IS_ERR(tsk)) {
-		sgx_page_cache_teardown();
-		return PTR_ERR(tsk);
+		ret = PTR_ERR(tsk);
+		goto err_kthread;
 	}
 	ksgxswapd_tsk = tsk;
 
 	return 0;
+
+err_kthread:
+	sgx_page_cache_teardown();
+err_page_cache:
+	sgx_fs_remove();
+	return ret;
 }
 
 arch_initcall(sgx_init);

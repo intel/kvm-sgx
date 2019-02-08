@@ -197,9 +197,4 @@ unsigned int sgx_alloc_va_slot(struct sgx_va_page *va_page);
 void sgx_free_va_slot(struct sgx_va_page *va_page, unsigned int offset);
 bool sgx_va_page_full(struct sgx_va_page *va_page);
 
-extern const struct file_operations sgx_fs_provision_fops;
-
-int sgx_fs_init(const char *name);
-void sgx_fs_remove(void);
-
 #endif /* __ARCH_X86_INTEL_SGX_H__ */

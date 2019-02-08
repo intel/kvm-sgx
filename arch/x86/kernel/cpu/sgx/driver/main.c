@@ -181,18 +181,11 @@ static int sgx_drv_init(struct device *parent)
 		goto err_ctx_alloc;
 	}
 
-	ret = sgx_fs_init(dev_name(&sgx_dev->ctrl_dev));
-	if (ret)
-		goto err_ctx_alloc;
-
 	ret = cdev_device_add(&sgx_dev->ctrl_cdev, &sgx_dev->ctrl_dev);
 	if (ret)
-		goto err_device_add;
+		return ret;
 
 	return 0;
-
-err_device_add:
-	sgx_fs_remove();
 
 err_ctx_alloc:
 	destroy_workqueue(sgx_encl_wq);
@@ -216,7 +209,6 @@ static int sgx_drv_remove(struct platform_device *pdev)
 {
 	struct sgx_dev_ctx *ctx = dev_get_drvdata(&pdev->dev);
 
-	sgx_fs_remove();
 	cdev_device_del(&ctx->ctrl_cdev, &ctx->ctrl_dev);
 	destroy_workqueue(sgx_encl_wq);
 
