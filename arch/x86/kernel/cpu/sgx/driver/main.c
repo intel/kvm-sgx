@@ -223,6 +223,7 @@ static int sgx_drv_remove(struct platform_device *pdev)
 {
 	struct sgx_dev_ctx *ctx = dev_get_drvdata(&pdev->dev);
 
+	sgx_fs_remove();
 	cdev_device_del(&ctx->ctrl_cdev, &ctx->ctrl_dev);
 	destroy_workqueue(sgx_encl_wq);
 
