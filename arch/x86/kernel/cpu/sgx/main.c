@@ -11,7 +11,7 @@
 #include <linux/slab.h>
 #include "sgx.h"
 
-static struct bus_type sgx_bus_type = {
+static struct class sgx_subsys = {
 	.name	= "sgx",
 };
 static dev_t sgx_devt;
@@ -501,7 +501,7 @@ int sgx_dev_ctx_alloc(const char *name, const struct file_operations *fops)
 
 	device_initialize(&ctx->ctrl_dev);
 
-	ctx->ctrl_dev.bus = &sgx_bus_type;
+	ctx->ctrl_dev.class = &sgx_subsys;
 	ctx->ctrl_dev.devt = MKDEV(MAJOR(sgx_devt), 0);
 	ctx->ctrl_dev.release = sgx_dev_release;
 
@@ -546,9 +546,9 @@ static __init int sgx_init(void)
 	}
 	ksgxswapd_tsk = tsk;
 
-	ret = bus_register(&sgx_bus_type);
+	ret = class_register(&sgx_subsys);
 	if (ret)
-		goto err_bus;
+		goto err_class;
 
 	ret = alloc_chrdev_region(&sgx_devt, 0, SGX_MAX_NR_DEVICES, "sgx");
 	if (ret < 0)
@@ -563,8 +563,8 @@ static __init int sgx_init(void)
 err_encl_drv:
 	unregister_chrdev_region(sgx_devt, SGX_MAX_NR_DEVICES);
 err_chrdev:
-	bus_unregister(&sgx_bus_type);
-err_bus:
+	class_unregister(&sgx_subsys);
+err_class:
 	kthread_stop(ksgxswapd_tsk);
 	ksgxswapd_tsk = NULL;
 err_kthread:
