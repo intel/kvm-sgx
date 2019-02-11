@@ -507,8 +507,14 @@ static __init int sgx_init(void)
 	if (ret < 0)
 		goto err_chrdev;
 
+	ret = sgx_encl_drv_probe();
+	if (ret)
+		goto err_encl_drv;
+
 	return 0;
 
+err_encl_drv:
+	unregister_chrdev_region(sgx_devt, SGX_MAX_NR_DEVICES);
 err_chrdev:
 	bus_unregister(&sgx_bus_type);
 err_bus:

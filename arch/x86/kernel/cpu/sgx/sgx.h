@@ -319,6 +319,8 @@ static inline int __emodt(struct sgx_secinfo *secinfo, void *addr)
 int sgx_fs_init(const char *name);
 void sgx_fs_remove(void);
 
+int sgx_encl_drv_probe(void);
+
 struct sgx_epc_page *sgx_alloc_page(void *owner, bool reclaim);
 int __sgx_free_page(struct sgx_epc_page *page);
 void sgx_free_page(struct sgx_epc_page *page);

@@ -80,7 +80,7 @@ static void sgx_dev_release(struct device *dev)
 	kfree(ctx);
 }
 
-static struct sgx_dev_ctx *sgx_dev_ctx_alloc(struct device *parent)
+static struct sgx_dev_ctx *sgx_dev_ctx_alloc(void)
 {
 	struct sgx_dev_ctx *ctx;
 	int ret;
@@ -92,7 +92,6 @@ static struct sgx_dev_ctx *sgx_dev_ctx_alloc(struct device *parent)
 	device_initialize(&ctx->ctrl_dev);
 
 	ctx->ctrl_dev.bus = &sgx_bus_type;
-	ctx->ctrl_dev.parent = parent;
 	ctx->ctrl_dev.devt = MKDEV(MAJOR(sgx_devt), 0);
 	ctx->ctrl_dev.release = sgx_dev_release;
 
@@ -105,29 +104,10 @@ static struct sgx_dev_ctx *sgx_dev_ctx_alloc(struct device *parent)
 	cdev_init(&ctx->ctrl_cdev, &sgx_ctrl_fops);
 	ctx->ctrl_cdev.owner = THIS_MODULE;
 
-	dev_set_drvdata(parent, ctx);
-
 	return ctx;
 }
 
-static struct sgx_dev_ctx *sgxm_dev_ctx_alloc(struct device *parent)
-{
-	struct sgx_dev_ctx *ctx;
-	int rc;
-
-	ctx = sgx_dev_ctx_alloc(parent);
-	if (IS_ERR(ctx))
-		return ctx;
-
-	rc = devm_add_action_or_reset(parent, (void (*)(void *))put_device,
-				      &ctx->ctrl_dev);
-	if (rc)
-		return ERR_PTR(rc);
-
-	return ctx;
-}
-
-static int sgx_drv_init(struct device *parent)
+static int sgx_drv_init(void)
 {
 	struct sgx_dev_ctx *sgx_dev;
 	unsigned int eax;
@@ -169,7 +149,7 @@ static int sgx_drv_init(struct device *parent)
 	if (!sgx_encl_wq)
 		return -ENOMEM;
 
-	sgx_dev = sgxm_dev_ctx_alloc(parent);
+	sgx_dev = sgx_dev_ctx_alloc();
 	if (IS_ERR(sgx_dev)) {
 		ret = PTR_ERR(sgx_dev);
 		goto err_ctx_alloc;
@@ -177,16 +157,18 @@ static int sgx_drv_init(struct device *parent)
 
 	ret = cdev_device_add(&sgx_dev->ctrl_cdev, &sgx_dev->ctrl_dev);
 	if (ret)
-		return ret;
+		goto err_cdev_add;
 
 	return 0;
 
+err_cdev_add:
+	put_device(&sgx_dev->ctrl_dev);
 err_ctx_alloc:
 	destroy_workqueue(sgx_encl_wq);
 	return ret;
 }
 
-static int sgx_drv_probe(struct platform_device *pdev)
+int sgx_encl_drv_probe(void)
 {
 	if (!boot_cpu_has(X86_FEATURE_SGX))
 		return -ENODEV;
@@ -196,44 +178,5 @@ static int sgx_drv_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	return sgx_drv_init(&pdev->dev);
+	return sgx_drv_init();
 }
-
-static int sgx_drv_remove(struct platform_device *pdev)
-{
-	struct sgx_dev_ctx *ctx = dev_get_drvdata(&pdev->dev);
-
-	cdev_device_del(&ctx->ctrl_cdev, &ctx->ctrl_dev);
-	destroy_workqueue(sgx_encl_wq);
-
-	return 0;
-}
-
-#ifdef CONFIG_ACPI
-static struct acpi_device_id sgx_device_ids[] = {
-	{"INT0E0C", 0},
-	{"", 0},
-};
-MODULE_DEVICE_TABLE(acpi, sgx_device_ids);
-#endif
-
-static struct platform_driver sgx_drv = {
-	.probe = sgx_drv_probe,
-	.remove = sgx_drv_remove,
-	.driver = {
-		.name			= "sgx",
-		.acpi_match_table	= ACPI_PTR(sgx_device_ids),
-	},
-};
-
-static int __init sgx_init(void)
-{
-	return platform_driver_register(&sgx_drv);
-}
-module_init(sgx_init);
-
-static void __exit sgx_exit(void)
-{
-	platform_driver_unregister(&sgx_drv);
-}
-module_exit(sgx_exit);
