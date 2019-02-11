@@ -149,8 +149,6 @@ static int sgx_drv_init(struct device *parent)
 	int ret;
 	int i;
 
-	sgx_dev = sgxm_dev_ctx_alloc(parent);
-
 	cpuid_count(SGX_CPUID, 0, &eax, &ebx, &ecx, &edx);
 	sgx_misc_reserved_mask = ~ebx | SGX_MISC_RESERVED_MASK;
 	sgx_encl_size_max_64 = 1ULL << ((edx >> 8) & 0xFF);
@@ -181,6 +179,12 @@ static int sgx_drv_init(struct device *parent)
 	if (!sgx_encl_wq)
 		return -ENOMEM;
 
+	sgx_dev = sgxm_dev_ctx_alloc(parent);
+	if (IS_ERR(sgx_dev)) {
+		ret = PTR_ERR(sgx_dev);
+		goto err_ctx_alloc;
+	}
+
 	ret = sgx_fs_init(&sgx_dev->ctrl_dev);
 	if (ret)
 		goto err_fs_init;
@@ -195,6 +199,9 @@ err_device_add:
 	sgx_fs_remove();
 
 err_fs_init:
+	kfree(sgx_dev);
+
+err_ctx_alloc:
 	destroy_workqueue(sgx_encl_wq);
 	return ret;
 }
