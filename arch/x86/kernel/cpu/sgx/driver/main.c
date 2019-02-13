@@ -2,7 +2,6 @@
 // Copyright(c) 2016-18 Intel Corporation.
 
 #include <linux/acpi.h>
-#include <linux/cdev.h>
 #include <linux/mman.h>
 #include <linux/platform_device.h>
 #include <linux/suspend.h>
@@ -66,53 +65,6 @@ static const struct file_operations sgx_ctrl_fops = {
 	.mmap			= sgx_mmap,
 	.get_unmapped_area	= sgx_get_unmapped_area,
 };
-
-struct sgx_dev_ctx {
-	struct device ctrl_dev;
-	struct cdev ctrl_cdev;
-};
-
-static void sgx_dev_release(struct device *dev)
-{
-	struct sgx_dev_ctx *ctx = container_of(dev, struct sgx_dev_ctx,
-					       ctrl_dev);
-
-	kfree(ctx);
-}
-
-static int sgx_dev_ctx_alloc(const char *name,
-			     const struct file_operations *fops)
-{
-	struct sgx_dev_ctx *ctx;
-	int ret;
-
-	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
-	if (!ctx)
-		return -ENOMEM;
-
-	device_initialize(&ctx->ctrl_dev);
-
-	ctx->ctrl_dev.bus = &sgx_bus_type;
-	ctx->ctrl_dev.devt = MKDEV(MAJOR(sgx_devt), 0);
-	ctx->ctrl_dev.release = sgx_dev_release;
-
-	ret = dev_set_name(&ctx->ctrl_dev, name);
-	if (ret)
-		goto out_error;
-
-	cdev_init(&ctx->ctrl_cdev, fops);
-	ctx->ctrl_cdev.owner = fops->owner;
-
-	ret = cdev_device_add(&ctx->ctrl_cdev, &ctx->ctrl_dev);
-	if (ret)
-		goto out_error;
-
-	return 0;
-
-out_error:
-	put_device(&ctx->ctrl_dev);
-	return ret;
-}
 
 static int sgx_drv_init(void)
 {

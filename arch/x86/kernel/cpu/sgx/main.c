@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: (GPL-2.0 OR BSD-3-Clause)
 // Copyright(c) 2016-17 Intel Corporation.
 
+#include <linux/cdev.h>
 #include <linux/freezer.h>
 #include <linux/highmem.h>
 #include <linux/kthread.h>
@@ -10,10 +11,15 @@
 #include <linux/slab.h>
 #include "sgx.h"
 
-struct bus_type sgx_bus_type = {
+static struct bus_type sgx_bus_type = {
 	.name	= "sgx",
 };
-dev_t sgx_devt;
+static dev_t sgx_devt;
+
+struct sgx_dev_ctx {
+	struct device ctrl_dev;
+	struct cdev ctrl_cdev;
+};
 
 #define SGX_MAX_NR_DEVICES	1
 
@@ -474,6 +480,47 @@ static __init int sgx_page_cache_init(void)
 	}
 
 	return 0;
+}
+
+static void sgx_dev_release(struct device *dev)
+{
+	struct sgx_dev_ctx *ctx = container_of(dev, struct sgx_dev_ctx,
+					       ctrl_dev);
+
+	kfree(ctx);
+}
+
+int sgx_dev_ctx_alloc(const char *name, const struct file_operations *fops)
+{
+	struct sgx_dev_ctx *ctx;
+	int ret;
+
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return -ENOMEM;
+
+	device_initialize(&ctx->ctrl_dev);
+
+	ctx->ctrl_dev.bus = &sgx_bus_type;
+	ctx->ctrl_dev.devt = MKDEV(MAJOR(sgx_devt), 0);
+	ctx->ctrl_dev.release = sgx_dev_release;
+
+	ret = dev_set_name(&ctx->ctrl_dev, name);
+	if (ret)
+		goto out_error;
+
+	cdev_init(&ctx->ctrl_cdev, fops);
+	ctx->ctrl_cdev.owner = fops->owner;
+
+	ret = cdev_device_add(&ctx->ctrl_cdev, &ctx->ctrl_dev);
+	if (ret)
+		goto out_error;
+
+	return 0;
+
+out_error:
+	put_device(&ctx->ctrl_dev);
+	return ret;
 }
 
 static __init int sgx_init(void)
