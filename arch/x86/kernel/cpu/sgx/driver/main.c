@@ -86,23 +86,6 @@ static void sgx_dev_release(struct device *dev)
 	kfree(ctx);
 }
 
-static void sgx_dev_init(struct device *dev, struct cdev *cdev,
-			 struct device *parent, const char *name,
-			 const struct file_operations *fops)
-{
-	device_initialize(dev);
-
-	dev->bus = &sgx_bus_type;
-	dev->parent = parent;
-	dev->devt = MKDEV(MAJOR(sgx_devt), 0);
-	dev->release = sgx_dev_release;
-
-	dev_set_name(dev, name);
-
-	cdev_init(cdev, fops);
-	cdev->owner = THIS_MODULE;
-}
-
 static struct sgx_dev_ctx *sgx_dev_ctx_alloc(struct device *parent)
 {
 	struct sgx_dev_ctx *ctx;
@@ -111,8 +94,18 @@ static struct sgx_dev_ctx *sgx_dev_ctx_alloc(struct device *parent)
 	if (!ctx)
 		return ERR_PTR(-ENOMEM);
 
-	sgx_dev_init(&ctx->ctrl_dev, &ctx->ctrl_cdev, parent, "sgx",
-		     &sgx_ctrl_fops);
+	device_initialize(&ctx->ctrl_dev);
+
+	ctx->ctrl_dev.bus = &sgx_bus_type;
+	ctx->ctrl_dev.parent = parent;
+	ctx->ctrl_dev.devt = MKDEV(MAJOR(sgx_devt), 0);
+	ctx->ctrl_dev.release = sgx_dev_release;
+
+	dev_set_name(&ctx->ctrl_dev, "sgx");
+
+	cdev_init(&ctx->ctrl_cdev, &sgx_ctrl_fops);
+	ctx->ctrl_cdev.owner = THIS_MODULE;
+
 	dev_set_drvdata(parent, ctx);
 
 	return ctx;
