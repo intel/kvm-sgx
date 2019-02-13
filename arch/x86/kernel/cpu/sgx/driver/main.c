@@ -80,7 +80,8 @@ static void sgx_dev_release(struct device *dev)
 	kfree(ctx);
 }
 
-static int sgx_dev_ctx_alloc(void)
+static int sgx_dev_ctx_alloc(const char *name,
+			     const struct file_operations *fops)
 {
 	struct sgx_dev_ctx *ctx;
 	int ret;
@@ -95,12 +96,12 @@ static int sgx_dev_ctx_alloc(void)
 	ctx->ctrl_dev.devt = MKDEV(MAJOR(sgx_devt), 0);
 	ctx->ctrl_dev.release = sgx_dev_release;
 
-	ret = dev_set_name(&ctx->ctrl_dev, "sgx");
+	ret = dev_set_name(&ctx->ctrl_dev, name);
 	if (ret)
 		goto out_error;
 
-	cdev_init(&ctx->ctrl_cdev, &sgx_ctrl_fops);
-	ctx->ctrl_cdev.owner = THIS_MODULE;
+	cdev_init(&ctx->ctrl_cdev, fops);
+	ctx->ctrl_cdev.owner = fops->owner;
 
 	ret = cdev_device_add(&ctx->ctrl_cdev, &ctx->ctrl_dev);
 	if (ret)
@@ -154,7 +155,7 @@ static int sgx_drv_init(void)
 	if (!sgx_encl_wq)
 		return -ENOMEM;
 
-	ret = sgx_dev_ctx_alloc();
+	ret = sgx_dev_ctx_alloc("sgx", &sgx_ctrl_fops);
 	if (ret)
 		goto err_ctx_alloc;
 
