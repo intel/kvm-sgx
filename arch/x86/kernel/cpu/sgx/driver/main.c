@@ -187,7 +187,7 @@ static int sgx_drv_init(struct device *parent)
 
 	ret = sgx_fs_init(&sgx_dev->ctrl_dev);
 	if (ret)
-		goto err_fs_init;
+		goto err_ctx_alloc;
 
 	ret = cdev_device_add(&sgx_dev->ctrl_cdev, &sgx_dev->ctrl_dev);
 	if (ret)
@@ -197,9 +197,6 @@ static int sgx_drv_init(struct device *parent)
 
 err_device_add:
 	sgx_fs_remove();
-
-err_fs_init:
-	kfree(sgx_dev);
 
 err_ctx_alloc:
 	destroy_workqueue(sgx_encl_wq);
