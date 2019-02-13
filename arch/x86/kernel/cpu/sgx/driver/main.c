@@ -129,10 +129,8 @@ static struct sgx_dev_ctx *sgxm_dev_ctx_alloc(struct device *parent)
 
 	rc = devm_add_action_or_reset(parent, (void (*)(void *))put_device,
 				      &ctx->ctrl_dev);
-	if (rc) {
-		kfree(ctx);
+	if (rc)
 		return ERR_PTR(rc);
-	}
 
 	return ctx;
 }
