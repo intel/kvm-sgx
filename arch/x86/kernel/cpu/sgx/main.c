@@ -404,11 +404,6 @@ static __init void sgx_page_cache_teardown(void)
 {
 	int i;
 
-	if (ksgxswapd_tsk) {
-		kthread_stop(ksgxswapd_tsk);
-		ksgxswapd_tsk = NULL;
-	}
-
 	for (i = 0; i < sgx_nr_epc_sections; i++)
 		sgx_free_epc_section(&sgx_epc_sections[i]);
 
