@@ -80,14 +80,14 @@ static void sgx_dev_release(struct device *dev)
 	kfree(ctx);
 }
 
-static struct sgx_dev_ctx *sgx_dev_ctx_alloc(void)
+static int sgx_dev_ctx_alloc(void)
 {
 	struct sgx_dev_ctx *ctx;
 	int ret;
 
 	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
-		return ERR_PTR(-ENOMEM);
+		return -ENOMEM;
 
 	device_initialize(&ctx->ctrl_dev);
 
@@ -96,20 +96,25 @@ static struct sgx_dev_ctx *sgx_dev_ctx_alloc(void)
 	ctx->ctrl_dev.release = sgx_dev_release;
 
 	ret = dev_set_name(&ctx->ctrl_dev, "sgx");
-	if (ret) {
-		put_device(&ctx->ctrl_dev);
-		return ERR_PTR(ret);
-	}
+	if (ret)
+		goto out_error;
 
 	cdev_init(&ctx->ctrl_cdev, &sgx_ctrl_fops);
 	ctx->ctrl_cdev.owner = THIS_MODULE;
 
-	return ctx;
+	ret = cdev_device_add(&ctx->ctrl_cdev, &ctx->ctrl_dev);
+	if (ret)
+		goto out_error;
+
+	return 0;
+
+out_error:
+	put_device(&ctx->ctrl_dev);
+	return ret;
 }
 
 static int sgx_drv_init(void)
 {
-	struct sgx_dev_ctx *sgx_dev;
 	unsigned int eax;
 	unsigned int ebx;
 	unsigned int ecx;
@@ -149,20 +154,12 @@ static int sgx_drv_init(void)
 	if (!sgx_encl_wq)
 		return -ENOMEM;
 
-	sgx_dev = sgx_dev_ctx_alloc();
-	if (IS_ERR(sgx_dev)) {
-		ret = PTR_ERR(sgx_dev);
-		goto err_ctx_alloc;
-	}
-
-	ret = cdev_device_add(&sgx_dev->ctrl_cdev, &sgx_dev->ctrl_dev);
+	ret = sgx_dev_ctx_alloc();
 	if (ret)
-		goto err_cdev_add;
+		goto err_ctx_alloc;
 
 	return 0;
 
-err_cdev_add:
-	put_device(&sgx_dev->ctrl_dev);
 err_ctx_alloc:
 	destroy_workqueue(sgx_encl_wq);
 	return ret;
