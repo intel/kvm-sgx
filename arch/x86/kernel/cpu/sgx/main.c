@@ -17,8 +17,8 @@ static struct class sgx_subsys = {
 static dev_t sgx_devt;
 
 struct sgx_dev_ctx {
-	struct device ctrl_dev;
-	struct cdev ctrl_cdev;
+	struct device dev;
+	struct cdev cdev;
 };
 
 #define SGX_MAX_NR_DEVICES	1
@@ -484,10 +484,7 @@ static __init int sgx_page_cache_init(void)
 
 static void sgx_dev_release(struct device *dev)
 {
-	struct sgx_dev_ctx *ctx = container_of(dev, struct sgx_dev_ctx,
-					       ctrl_dev);
-
-	kfree(ctx);
+	kfree(container_of(dev, struct sgx_dev_ctx, dev));
 }
 
 int sgx_dev_ctx_alloc(const char *name, const struct file_operations *fops)
@@ -499,27 +496,27 @@ int sgx_dev_ctx_alloc(const char *name, const struct file_operations *fops)
 	if (!ctx)
 		return -ENOMEM;
 
-	device_initialize(&ctx->ctrl_dev);
+	device_initialize(&ctx->dev);
 
-	ctx->ctrl_dev.class = &sgx_subsys;
-	ctx->ctrl_dev.devt = MKDEV(MAJOR(sgx_devt), 0);
-	ctx->ctrl_dev.release = sgx_dev_release;
+	ctx->dev.class = &sgx_subsys;
+	ctx->dev.devt = MKDEV(MAJOR(sgx_devt), 0);
+	ctx->dev.release = sgx_dev_release;
 
-	ret = dev_set_name(&ctx->ctrl_dev, name);
+	ret = dev_set_name(&ctx->dev, name);
 	if (ret)
 		goto out_error;
 
-	cdev_init(&ctx->ctrl_cdev, fops);
-	ctx->ctrl_cdev.owner = fops->owner;
+	cdev_init(&ctx->cdev, fops);
+	ctx->cdev.owner = fops->owner;
 
-	ret = cdev_device_add(&ctx->ctrl_cdev, &ctx->ctrl_dev);
+	ret = cdev_device_add(&ctx->cdev, &ctx->dev);
 	if (ret)
 		goto out_error;
 
 	return 0;
 
 out_error:
-	put_device(&ctx->ctrl_dev);
+	put_device(&ctx->dev);
 	return ret;
 }
 
