@@ -107,7 +107,7 @@ static int sgx_drv_init(void)
 	if (!sgx_encl_wq)
 		return -ENOMEM;
 
-	ret = sgx_dev_ctx_alloc("sgx", &sgx_ctrl_fops);
+	ret = sgx_device_alloc("sgx", &sgx_ctrl_fops);
 	if (ret)
 		goto err_ctx_alloc;
 

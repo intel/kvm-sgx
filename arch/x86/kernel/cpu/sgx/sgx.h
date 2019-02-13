@@ -317,7 +317,7 @@ int sgx_fs_init(const char *name);
 void sgx_fs_remove(void);
 
 int sgx_encl_drv_probe(void);
-int sgx_dev_ctx_alloc(const char *name, const struct file_operations *fops);
+int sgx_device_alloc(const char *name, const struct file_operations *fops);
 
 struct sgx_epc_page *sgx_alloc_page(void *owner, bool reclaim);
 int __sgx_free_page(struct sgx_epc_page *page);

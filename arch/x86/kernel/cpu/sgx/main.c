@@ -16,7 +16,7 @@ static struct class sgx_subsys = {
 };
 static dev_t sgx_devt;
 
-struct sgx_dev_ctx {
+struct sgx_device {
 	struct device dev;
 	struct cdev cdev;
 };
@@ -484,39 +484,39 @@ static __init int sgx_page_cache_init(void)
 
 static void sgx_dev_release(struct device *dev)
 {
-	kfree(container_of(dev, struct sgx_dev_ctx, dev));
+	kfree(container_of(dev, struct sgx_device, dev));
 }
 
-int sgx_dev_ctx_alloc(const char *name, const struct file_operations *fops)
+int sgx_device_alloc(const char *name, const struct file_operations *fops)
 {
-	struct sgx_dev_ctx *ctx;
+	struct sgx_device *sgx_dev;
 	int ret;
 
-	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
-	if (!ctx)
+	sgx_dev = kzalloc(sizeof(*sgx_dev), GFP_KERNEL);
+	if (!sgx_dev)
 		return -ENOMEM;
 
-	device_initialize(&ctx->dev);
+	device_initialize(&sgx_dev->dev);
 
-	ctx->dev.class = &sgx_subsys;
-	ctx->dev.devt = MKDEV(MAJOR(sgx_devt), 0);
-	ctx->dev.release = sgx_dev_release;
+	sgx_dev->dev.class = &sgx_subsys;
+	sgx_dev->dev.devt = MKDEV(MAJOR(sgx_devt), 0);
+	sgx_dev->dev.release = sgx_dev_release;
 
-	ret = dev_set_name(&ctx->dev, name);
+	ret = dev_set_name(&sgx_dev->dev, name);
 	if (ret)
 		goto out_error;
 
-	cdev_init(&ctx->cdev, fops);
-	ctx->cdev.owner = fops->owner;
+	cdev_init(&sgx_dev->cdev, fops);
+	sgx_dev->cdev.owner = fops->owner;
 
-	ret = cdev_device_add(&ctx->cdev, &ctx->dev);
+	ret = cdev_device_add(&sgx_dev->cdev, &sgx_dev->dev);
 	if (ret)
 		goto out_error;
 
 	return 0;
 
 out_error:
-	put_device(&ctx->dev);
+	put_device(&sgx_dev->dev);
 	return ret;
 }
 
