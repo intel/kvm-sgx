@@ -2,8 +2,8 @@
 // Copyright(c) 2016-18 Intel Corporation.
 
 #include <stddef.h>
+#include <asm/sgx_arch.h>
 #include "defines.h"
-#include "../../../../../arch/x86/kernel/cpu/sgx/sgx_arch.h"
 
 static void *memcpy(void *dest, const void *src, size_t n)
 {

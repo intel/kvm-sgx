@@ -11,9 +11,9 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <asm/sgx_arch.h>
 #include "encl_piggy.h"
 #include "defines.h"
-#include "../../../../../arch/x86/kernel/cpu/sgx/sgx_arch.h"
 #include "../../../../../arch/x86/include/uapi/asm/sgx.h"
 
 static const uint64_t MAGIC = 0x1122334455667788ULL;

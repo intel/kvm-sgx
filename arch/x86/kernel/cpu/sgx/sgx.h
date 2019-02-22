@@ -9,8 +9,8 @@
 #include <linux/rwsem.h>
 #include <linux/types.h>
 #include <asm/asm.h>
+#include <asm/sgx_arch.h>
 #include <uapi/asm/sgx_errno.h>
-#include "sgx_arch.h"
 
 extern const struct file_operations sgx_fs_provision_fops;
 

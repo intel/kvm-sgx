@@ -13,8 +13,8 @@
 #include <unistd.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
+#include <asm/sgx_arch.h>
 #include "defines.h"
-#include "../../../../../arch/x86/kernel/cpu/sgx/sgx_arch.h"
 
 struct sgx_sigstruct_payload {
 	struct sgx_sigstruct_header header;
