@@ -344,6 +344,20 @@ int sgx_virt_ecreate(struct sgx_pageinfo *pginfo, struct sgx_epc_page *secs,
 }
 EXPORT_SYMBOL_GPL(sgx_virt_ecreate);
 
+int sgx_virt_einit(struct sgx_sigstruct *sigstruct,
+                   struct sgx_einittoken *token, struct sgx_epc_page *secs,
+                   u64 *lepubkeyhash, int *trapnr)
+{
+	int ret = sgx_einit(sigstruct, token, secs, lepubkeyhash);
+
+	if (IS_ENCLS_FAULT(ret)) {
+		*trapnr = ENCLS_TRAPNR(ret);
+		return -EFAULT;
+	}
+	return ret;
+}
+EXPORT_SYMBOL_GPL(sgx_virt_einit);
+
 static int sgx_virt_epc_create(unsigned long arg)
 {
 	struct sgx_virt_epc_create params;
