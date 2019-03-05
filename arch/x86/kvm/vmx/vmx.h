@@ -271,6 +271,10 @@ struct vcpu_vmx {
 	u64 msr_ia32_feature_control;
 	u64 msr_ia32_feature_control_valid_bits;
 	u64 ept_pointer;
+#ifdef CONFIG_INTEL_SGX_CORE
+	/* SGX Launch Control public key hash */
+	u64 msr_ia32_sgxlepubkeyhash[4];
+#endif
 
 	struct pt_desc pt_desc;
 };

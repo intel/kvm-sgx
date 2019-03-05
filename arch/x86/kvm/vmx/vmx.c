@@ -386,6 +386,10 @@ static const struct kvm_vmx_segment_field {
 
 u64 host_efer;
 
+#ifdef CONFIG_INTEL_SGX_CORE
+static u64 sgx_pubkey_hash[4];
+#endif
+
 /*
  * Though SYSCALL is only supported in 64-bit mode on Intel CPUs, kvm
  * will emulate SYSCALL in legacy mode if the vendor string in guest
@@ -1738,6 +1742,17 @@ static int vmx_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_IA32_FEATURE_CONTROL:
 		msr_info->data = vmx->msr_ia32_feature_control;
 		break;
+	case MSR_IA32_SGXLEPUBKEYHASH0 ... MSR_IA32_SGXLEPUBKEYHASH3:
+#ifndef CONFIG_INTEL_SGX_CORE
+		return 1;
+#else
+		if (!msr_info->host_initiated &&
+		    !guest_cpuid_has(vcpu, X86_FEATURE_SGX_LC))
+			return 1;
+		msr_info->data = to_vmx(vcpu)->msr_ia32_sgxlepubkeyhash
+			[msr_info->index - MSR_IA32_SGXLEPUBKEYHASH0];
+		break;
+#endif
 	case MSR_IA32_VMX_BASIC ... MSR_IA32_VMX_VMFUNC:
 		if (!nested_vmx_allowed(vcpu))
 			return 1;
@@ -1953,6 +1968,22 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		if (msr_info->host_initiated && data == 0)
 			vmx_leave_nested(vcpu);
 		break;
+	case MSR_IA32_SGXLEPUBKEYHASH0 ... MSR_IA32_SGXLEPUBKEYHASH3:
+#ifndef CONFIG_INTEL_SGX_CORE
+		return 1;
+#else
+		if (!boot_cpu_has(X86_FEATURE_SGX_LC) ||
+		    !guest_cpuid_has(vcpu, X86_FEATURE_SGX_LC))
+			return 1;
+		if (!msr_info->host_initiated &&
+		    (!guest_cpuid_has(vcpu, X86_FEATURE_SGX_LC) ||
+		    ((vmx->msr_ia32_feature_control & FEATURE_CONTROL_LOCKED) &&
+		    !(vmx->msr_ia32_feature_control & FEATURE_CONTROL_SGX_LE_WR))))
+			return 1;
+		vmx->msr_ia32_sgxlepubkeyhash
+			[msr_index - MSR_IA32_SGXLEPUBKEYHASH0] = data;
+		break;
+#endif
 	case MSR_IA32_VMX_BASIC ... MSR_IA32_VMX_VMFUNC:
 		if (!msr_info->host_initiated)
 			return 1; /* they are read-only */
@@ -6805,6 +6836,11 @@ static struct kvm_vcpu *vmx_create_vcpu(struct kvm *kvm, unsigned int id)
 	else
 		memset(&vmx->nested.msrs, 0, sizeof(vmx->nested.msrs));
 
+#ifdef CONFIG_INTEL_SGX_CORE
+	memcpy(vmx->msr_ia32_sgxlepubkeyhash, sgx_pubkey_hash,
+	       sizeof(sgx_pubkey_hash));
+#endif
+
 	vmx->nested.posted_intr_nv = -1;
 	vmx->nested.current_vmptr = -1ull;
 
@@ -7697,6 +7733,30 @@ static __init int hardware_setup(void)
 		return -EINVAL;
 	if (!enable_ept || !cpu_has_vmx_intel_pt())
 		pt_mode = PT_MODE_SYSTEM;
+
+	/*
+	 * Use Intel's default hardware value if Launch Control is not
+	 * supported, i.e. Intel's hash is hardcoded into silicon, or
+	 * if Launch Control is supported and enabled, i.e. mimic the
+	 * reset value and let the guest write the MSRs at will.  If
+	 * Launch Control is supported but disabled, i.e. the hash MSRs
+	 * exist but are locked, then we have to use the current MSR
+	 * values as the MSRs are not writable.
+	 */
+#ifdef CONFIG_INTEL_SGX_CORE
+	if (boot_cpu_has(X86_FEATURE_SGX_LC) ||
+	    rdmsrl_safe(MSR_IA32_SGXLEPUBKEYHASH0, &sgx_pubkey_hash[0])) {
+		sgx_pubkey_hash[0] = 0xa6053e051270b7acULL;
+		sgx_pubkey_hash[1] = 0x6cfbe8ba8b3b413dULL;
+		sgx_pubkey_hash[2] = 0xc4916d99f2b3735dULL;
+		sgx_pubkey_hash[3] = 0xd4f8c05909f9bb3bULL;
+	} else {
+		/* MSR_IA32_SGXLEPUBKEYHASH0 is read above */
+		rdmsrl(MSR_IA32_SGXLEPUBKEYHASH1, sgx_pubkey_hash[1]);
+		rdmsrl(MSR_IA32_SGXLEPUBKEYHASH2, sgx_pubkey_hash[2]);
+		rdmsrl(MSR_IA32_SGXLEPUBKEYHASH3, sgx_pubkey_hash[3]);
+	}
+#endif
 
 	if (nested) {
 		nested_vmx_setup_ctls_msrs(&vmcs_config.nested,
