@@ -6,6 +6,7 @@
 
 #include <asm/kvm.h>
 #include <asm/intel_pt.h>
+#include <asm/vmx.h>
 
 #include "capabilities.h"
 #include "ops.h"
