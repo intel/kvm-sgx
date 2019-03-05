@@ -654,7 +654,6 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 		if (*nent >= maxnent)
 			goto out;
 		do_cpuid_1_ent(++entry, 0x12, 0x1);
-		entry->eax &= ~SGX_ATTR_PROVISIONKEY;
 		entry->flags |= KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
 		++*nent;
 		break;
