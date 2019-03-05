@@ -331,6 +331,19 @@ out:
 }
 EXPORT_SYMBOL_GPL(sgx_virt_get_epc_page);
 
+int sgx_virt_ecreate(struct sgx_pageinfo *pginfo, struct sgx_epc_page *secs,
+                     int *trapnr)
+{
+	int ret = __ecreate(pginfo, sgx_epc_addr(secs));
+
+	if (IS_ENCLS_FAULT(ret)) {
+		*trapnr = ENCLS_TRAPNR(ret);
+		return -EFAULT;
+	}
+	return ret;
+}
+EXPORT_SYMBOL_GPL(sgx_virt_ecreate);
+
 static int sgx_virt_epc_create(unsigned long arg)
 {
 	struct sgx_virt_epc_create params;
