@@ -235,3 +235,67 @@ out:
 
 	return ret;
 }
+
+int handle_encls_einit(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_vmx *vmx = to_vmx(vcpu);
+	struct page *sig_token_page;
+	int r, ret, trapnr;
+
+	struct encls_mem_op sig = {
+		.reg = VCPU_REGS_RBX,
+		.size = 1808,
+		.align = 4096,
+	};
+	struct encls_mem_op secs = {
+		.reg = VCPU_REGS_RCX,
+		.size = 4096,
+		.align = 4096,
+		.write = true,
+	};
+	struct encls_mem_op token = {
+		.reg = VCPU_REGS_RDX,
+		.size = 304,
+		.align = 512,
+	};
+
+	if (get_encls_mem_op(vcpu, &sig) ||
+	    get_encls_mem_op(vcpu, &secs) ||
+	    get_encls_mem_op(vcpu, &token))
+		return 1;
+
+	if (get_encls_epc_gpa(vcpu, &secs))
+		return 1;
+
+	/*
+	 * Even though we don't need the full 4k, allocate an entire page
+	 * for the sig and token so that we can satisfy EINIT's alignment
+	 * requirements with minimal arithmetic.
+	 */
+	sig_token_page = alloc_page(GFP_HIGHUSER);
+	if (!sig_token_page)
+		return -ENOMEM;
+
+	sig.p = kmap(sig_token_page);
+	token.p = (void *)ALIGN((unsigned long)sig.p + sig.size, token.align);
+
+	if (get_encls_mem_value(vcpu, &sig) ||
+	    get_encls_mem_value(vcpu, &token)) {
+		ret = 1;
+		goto out;
+	}
+
+	ret = get_encls_epc_page(vcpu, &secs);
+	if (ret)
+		goto out;
+
+	r = sgx_virt_einit(sig.p, token.p, secs.p,
+			   vmx->msr_ia32_sgxlepubkeyhash, &trapnr);
+	put_encls_epc_page(secs.p);
+
+	ret = vmx_encls_postamble(vcpu, r, trapnr, &secs);
+out:
+	kunmap(sig_token_page);
+	__free_page(sig_token_page);
+	return ret;
+}
