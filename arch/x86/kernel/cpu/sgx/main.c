@@ -25,7 +25,6 @@ enum sgx_swap_constants {
 };
 
 struct sgx_epc_section sgx_epc_sections[SGX_MAX_EPC_SECTIONS];
-EXPORT_SYMBOL_GPL(sgx_epc_sections);
 
 static int sgx_nr_epc_sections;
 static LIST_HEAD(sgx_active_page_list);
@@ -231,7 +230,6 @@ struct sgx_epc_page *sgx_alloc_page(void *owner, bool reclaim)
 
 	return entry;
 }
-EXPORT_SYMBOL_GPL(sgx_alloc_page);
 
 /**
  * __sgx_free_page - Free an EPC page
@@ -277,7 +275,6 @@ int __sgx_free_page(struct sgx_epc_page *page)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(__sgx_free_page);
 
 /**
  * sgx_free_page - Free an EPC page and WARN on failure
@@ -296,7 +293,6 @@ void sgx_free_page(struct sgx_epc_page *page)
 	WARN(ret < 0, "sgx: cannot free page, reclaim in-progress");
 	WARN(ret > 0, "sgx: EREMOVE returned %d (0x%x)", ret, ret);
 }
-EXPORT_SYMBOL_GPL(sgx_free_page);
 
 static void sgx_update_lepubkeyhash_msrs(u64 *lepubkeyhash, bool enforce)
 {
@@ -344,7 +340,6 @@ int sgx_einit(struct sgx_sigstruct *sigstruct, struct sgx_einittoken *token,
 	preempt_enable();
 	return ret;
 }
-EXPORT_SYMBOL(sgx_einit);
 
 /**
  * sgx_page_reclaimable - mark a page as reclaimable
@@ -361,7 +356,6 @@ void sgx_page_reclaimable(struct sgx_epc_page *page)
 	list_add_tail(&page->list, &sgx_active_page_list);
 	spin_unlock(&sgx_active_page_list_lock);
 }
-EXPORT_SYMBOL_GPL(sgx_page_reclaimable);
 
 static __init void sgx_free_epc_section(struct sgx_epc_section *section)
 {
