@@ -140,22 +140,11 @@ static const struct file_operations sgx_encl_fops = {
 	.get_unmapped_area	= sgx_get_unmapped_area,
 };
 
-const struct file_operations sgx_provision_fops = {
-	.owner			= THIS_MODULE,
-};
-
 static struct miscdevice sgx_dev_enclave = {
 	.minor = MISC_DYNAMIC_MINOR,
 	.name = "enclave",
 	.nodename = "sgx/enclave",
 	.fops = &sgx_encl_fops,
-};
-
-static struct miscdevice sgx_dev_provision = {
-	.minor = MISC_DYNAMIC_MINOR,
-	.name = "provision",
-	.nodename = "sgx/provision",
-	.fops = &sgx_provision_fops,
 };
 
 int __init sgx_drv_init(void)
@@ -193,17 +182,7 @@ int __init sgx_drv_init(void)
 	}
 
 	ret = misc_register(&sgx_dev_enclave);
-	if (ret) {
+	if (ret)
 		pr_err("Creating /dev/sgx/enclave failed with %d.\n", ret);
-		return ret;
-	}
-
-	ret = misc_register(&sgx_dev_provision);
-	if (ret) {
-		pr_err("Creating /dev/sgx/provision failed with %d.\n", ret);
-		misc_deregister(&sgx_dev_enclave);
-		return ret;
-	}
-
-	return 0;
+	return ret;
 }
