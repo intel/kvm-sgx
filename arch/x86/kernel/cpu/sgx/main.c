@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: (GPL-2.0 OR BSD-3-Clause)
 // Copyright(c) 2016-17 Intel Corporation.
 
+#include <linux/file.h>
 #include <linux/freezer.h>
 #include <linux/highmem.h>
 #include <linux/kthread.h>
+#include <linux/miscdevice.h>
 #include <linux/pagemap.h>
 #include <linux/ratelimit.h>
 #include <linux/sched/mm.h>
@@ -724,6 +726,35 @@ static bool __init sgx_page_cache_init(void)
 	return true;
 }
 
+const struct file_operations sgx_provision_fops = {
+	.owner			= THIS_MODULE,
+};
+
+static struct miscdevice sgx_dev_provision = {
+	.minor = MISC_DYNAMIC_MINOR,
+	.name = "provision",
+	.nodename = "sgx/provision",
+	.fops = &sgx_provision_fops,
+};
+
+int sgx_set_attribute(u64 *allowed_attributes, unsigned int attribute_fd)
+{
+	struct file *attribute_file;
+
+	attribute_file = fget(attribute_fd);
+	if (!attribute_file)
+		return -EINVAL;
+
+	if (attribute_file->f_op != &sgx_provision_fops) {
+		fput(attribute_file);
+		return -EINVAL;
+	}
+	fput(attribute_file);
+
+	*allowed_attributes |= SGX_ATTR_PROVISIONKEY;
+	return 0;
+}
+
 static void __init sgx_init(void)
 {
 	int ret;
@@ -737,11 +768,20 @@ static void __init sgx_init(void)
 	if (!sgx_page_reclaimer_init())
 		goto err_page_cache;
 
+	ret = misc_register(&sgx_dev_provision);
+	if (ret) {
+		pr_err("Creating /dev/sgx/provision failed with %d.\n", ret);
+		goto err_kthread;
+	}
+
 	ret = sgx_drv_init();
 	if (ret)
-		goto err_kthread;
+		goto err_provision;
 
 	return;
+
+err_provision:
+	misc_deregister(&sgx_dev_provision);
 
 err_kthread:
 	kthread_stop(ksgxswapd_tsk);
