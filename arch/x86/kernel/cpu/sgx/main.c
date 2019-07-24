@@ -11,7 +11,9 @@
 #include <linux/sched/mm.h>
 #include <linux/sched/signal.h>
 #include <linux/slab.h>
-#include "arch.h"
+
+#include <asm/sgx_arch.h>
+
 #include "driver.h"
 #include "encl.h"
 #include "encls.h"
