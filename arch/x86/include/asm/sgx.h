@@ -4,6 +4,8 @@
 
 #include <linux/types.h>
 
+int sgx_set_attribute(u64 *allowed_attributes, unsigned int attribute_fd);
+
 #ifdef CONFIG_INTEL_SGX_VIRTUALIZATION
 struct sgx_pageinfo;
 

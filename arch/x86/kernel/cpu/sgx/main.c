@@ -787,6 +787,7 @@ int sgx_set_attribute(u64 *allowed_attributes, unsigned int attribute_fd)
 	*allowed_attributes |= SGX_ATTR_PROVISIONKEY;
 	return 0;
 }
+EXPORT_SYMBOL_GPL(sgx_set_attribute);
 
 static void __init sgx_init(void)
 {

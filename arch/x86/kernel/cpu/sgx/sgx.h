@@ -63,6 +63,5 @@ void __sgx_free_epc_page(struct sgx_epc_page *page);
 void sgx_free_epc_page(struct sgx_epc_page *page);
 
 void sgx_update_lepubkeyhash_msrs(u64 *lepubkeyhash, bool enforce);
-int sgx_set_attribute(u64 *allowed_attributes, unsigned int attribute_fd);
 
 #endif /* _X86_SGX_H */
