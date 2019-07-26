@@ -535,7 +535,7 @@ static inline int __do_cpuid_func(struct kvm_cpuid_entry2 *entry, u32 function,
 
 	/* cpuid 12.1.eax*/
 	const u32 kvm_cpuid_12_1_eax_sgx_features =
-		SGX_ATTR_DEBUG | SGX_ATTR_MODE64BIT | 0 /* PROVISIONKEY */ |
+		SGX_ATTR_DEBUG | SGX_ATTR_MODE64BIT | SGX_ATTR_PROVISIONKEY |
 		SGX_ATTR_EINITTOKENKEY | SGX_ATTR_KSS;
 
 	/* cpuid 12.1.ebx*/
