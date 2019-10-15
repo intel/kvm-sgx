@@ -8,4 +8,7 @@
 
 void sgx_call_eenter(void *rdi, void *rsi, void *entry);
 
+int sgx_call_vdso(void *rdi, void *rsi, long rdx, void *rcx, void *r8, void *r9,
+		  void *tcs, struct sgx_enclave_exception *ei, void *cb);
+
 #endif /* SGX_CALL_H */
