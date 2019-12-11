@@ -1943,6 +1943,16 @@ config INTEL_SGX
 
 	  If unsure, say N.
 
+config INTEL_SGX_VIRTUALIZATION
+	bool "Intel SGX Virtualization"
+	depends on INTEL_SGX && KVM_INTEL
+	help
+	  SGX virtualization enables userspace to allocate "raw" EPC for the
+	  purpose of exposing EPC to a KVM guest, i.e. a virtual machine, via
+	  a device node, e.g. /dev/sgx/virt_epc.
+
+	  If unsure, say N.
+
 config EFI
 	bool "EFI runtime service support"
 	depends on ACPI

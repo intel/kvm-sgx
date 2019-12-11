@@ -11,9 +11,11 @@
 #include <linux/sched/mm.h>
 #include <linux/sched/signal.h>
 #include <linux/slab.h>
+#include "arch.h"
 #include "driver.h"
 #include "encl.h"
 #include "encls.h"
+#include "virt.h"
 
 struct sgx_epc_section sgx_epc_sections[SGX_MAX_EPC_SECTIONS];
 static int sgx_nr_epc_sections;
@@ -786,7 +788,9 @@ static void __init sgx_init(void)
 		goto err_kthread;
 	}
 
+	/* Success if the native *or* virtual driver initialized cleanly. */
 	ret = sgx_drv_init();
+	ret = sgx_virt_epc_init() ? ret : 0;
 	if (ret)
 		goto err_provision;
 
