@@ -595,14 +595,29 @@ struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 }
 
 /**
+ * __sgx_free_epc_page() - Free an EPC page
+ * @page:	pointer to a previously allocated EPC page
+ *
+ * Insert an EPC page back to the list of free pages.
+ */
+void __sgx_free_epc_page(struct sgx_epc_page *page)
+{
+	struct sgx_epc_section *section = &sgx_epc_sections[page->section];
+
+	spin_lock(&section->lock);
+	list_add_tail(&page->list, &section->page_list);
+	section->free_cnt++;
+	spin_unlock(&section->lock);
+}
+
+/**
  * sgx_free_epc_page() - Free an EPC page
- * @page:	an EPC page
+ * @page:	pointer to a previously allocated EPC page
  *
  * Call EREMOVE for an EPC page and insert it back to the list of free pages.
  */
 void sgx_free_epc_page(struct sgx_epc_page *page)
 {
-	struct sgx_epc_section *section = &sgx_epc_sections[page->section];
 	int ret;
 
 	WARN_ON_ONCE(page->flags & SGX_EPC_PAGE_RECLAIMER_TRACKED);
@@ -611,10 +626,7 @@ void sgx_free_epc_page(struct sgx_epc_page *page)
 	if (WARN_ONCE(ret, "EREMOVE returned %d (0x%x)", ret, ret))
 		return;
 
-	spin_lock(&section->lock);
-	list_add_tail(&page->list, &section->page_list);
-	section->free_cnt++;
-	spin_unlock(&section->lock);
+	__sgx_free_epc_page(page);
 }
 
 static bool __init sgx_setup_epc_section(u64 phys_addr, u64 size,
