@@ -77,6 +77,7 @@ static inline void *sgx_get_epc_virt_addr(struct sgx_epc_page *page)
 }
 
 struct sgx_epc_page *__sgx_alloc_epc_page(void);
+void __sgx_free_epc_page(struct sgx_epc_page *page);
 void sgx_free_epc_page(struct sgx_epc_page *page);
 
 void sgx_mark_page_reclaimable(struct sgx_epc_page *page);
