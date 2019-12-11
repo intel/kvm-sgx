@@ -40,6 +40,18 @@
 	} while (0);							  \
 }
 
+/*
+ * encls_faulted() - Check if an ENCLS leaf faulted given an error code
+ * @ret		the return value of an ENCLS leaf function call
+ *
+ * Return:
+ *	%true if @ret indicates a fault, %false otherwise
+ */
+static inline bool encls_faulted(int ret)
+{
+	return ret & ENCLS_FAULT_FLAG;
+}
+
 /**
  * encls_failed() - Check if an ENCLS leaf function failed
  * @ret:	the return value of an ENCLS leaf function call
@@ -57,7 +69,7 @@ static inline bool encls_failed(int ret)
 	else
 		epcm_trapnr = X86_TRAP_GP;
 
-	if (ret & ENCLS_FAULT_FLAG)
+	if (encls_faulted(ret))
 		return ENCLS_TRAPNR(ret) != epcm_trapnr;
 
 	return !!ret;
