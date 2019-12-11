@@ -103,6 +103,7 @@ void sgx_reclaim_pages(void);
 
 struct sgx_epc_page *sgx_try_alloc_page(void);
 struct sgx_epc_page *sgx_alloc_page(void *owner, bool reclaim);
+void __sgx_free_page(struct sgx_epc_page *page);
 void sgx_free_page(struct sgx_epc_page *page);
 
 int sgx_set_attribute(u64 *allowed_attributes, unsigned int attribute_fd);
