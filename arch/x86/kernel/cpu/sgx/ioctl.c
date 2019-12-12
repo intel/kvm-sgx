@@ -16,9 +16,6 @@
 #include "encl.h"
 #include "encls.h"
 
-/* A per-cpu cache for the last known values of IA32_SGXLEPUBKEYHASHx MSRs. */
-static DEFINE_PER_CPU(u64 [4], sgx_lepubkeyhash_cache);
-
 static struct sgx_va_page *sgx_encl_grow(struct sgx_encl *encl)
 {
 	struct sgx_va_page *va_page = NULL;
@@ -579,20 +576,6 @@ static int sgx_get_key_hash(const void *modulus, void *hash)
 
 	crypto_free_shash(tfm);
 	return ret;
-}
-
-static void sgx_update_lepubkeyhash_msrs(u64 *lepubkeyhash, bool enforce)
-{
-	u64 *cache;
-	int i;
-
-	cache = per_cpu(sgx_lepubkeyhash_cache, smp_processor_id());
-	for (i = 0; i < 4; i++) {
-		if (enforce || (lepubkeyhash[i] != cache[i])) {
-			wrmsrl(MSR_IA32_SGXLEPUBKEYHASH0 + i, lepubkeyhash[i]);
-			cache[i] = lepubkeyhash[i];
-		}
-	}
 }
 
 static int sgx_einit(struct sgx_sigstruct *sigstruct, void *token,

@@ -106,6 +106,7 @@ struct sgx_epc_page *sgx_alloc_page(void *owner, bool reclaim);
 void __sgx_free_page(struct sgx_epc_page *page);
 void sgx_free_page(struct sgx_epc_page *page);
 
+void sgx_update_lepubkeyhash_msrs(u64 *lepubkeyhash, bool enforce);
 int sgx_set_attribute(u64 *allowed_attributes, unsigned int attribute_fd);
 
 #endif /* _X86_SGX_H */
