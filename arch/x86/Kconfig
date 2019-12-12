@@ -1951,6 +1951,9 @@ config INTEL_SGX_VIRTUALIZATION
 	  purpose of exposing EPC to a KVM guest, i.e. a virtual machine, via
 	  a device node, e.g. /dev/sgx/virt_epc.
 
+	  SGX virtualization also adds helpers that are used by KVM to trap
+	  and execute certain ENCLS instructions on behalf of a KVM guest.
+
 	  If unsure, say N.
 
 config EFI
