@@ -15,7 +15,7 @@
 
 struct sgx_epc_page {
 	unsigned long desc;
-	struct sgx_encl_page *owner;
+	void *owner;
 	struct list_head list;
 };
 
