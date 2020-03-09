@@ -98,6 +98,11 @@ static void clear_sgx_caps(void)
 	setup_clear_cpu_cap(X86_FEATURE_SGX);
 }
 
+static void clear_sgx_lc(void)
+{
+	setup_clear_cpu_cap(X86_FEATURE_SGX_LC);
+}
+
 static int __init nosgx(char *str)
 {
 	clear_sgx_caps();
@@ -110,7 +115,7 @@ early_param("nosgx", nosgx);
 void init_ia32_feat_ctl(struct cpuinfo_x86 *c)
 {
 	bool tboot = tboot_enabled();
-	bool enable_sgx;
+	bool enable_vmx, enable_sgx_virt, enable_sgx_driver;
 	u64 msr;
 
 	if (rdmsrl_safe(MSR_IA32_FEAT_CTL, &msr)) {
@@ -119,13 +124,24 @@ void init_ia32_feat_ctl(struct cpuinfo_x86 *c)
 		return;
 	}
 
+	enable_vmx = cpu_has(c, X86_FEATURE_VMX) &&
+		     IS_ENABLED(CONFIG_KVM_INTEL);
+
 	/*
-	 * Enable SGX if and only if the kernel supports SGX and Launch Control
-	 * is supported, i.e. disable SGX if the LE hash MSRs can't be written.
+	 * Enable SGX if and only if the kernel supports SGX.  Require Launch
+	 * Control support if SGX virtualization is *not* supported, i.e.
+	 * disable SGX if the LE hash MSRs can't be written and SGX can't be
+	 * exposed to a KVM guest (which might support non-LC configurations).
 	 */
-	enable_sgx = cpu_has(c, X86_FEATURE_SGX) &&
-		     cpu_has(c, X86_FEATURE_SGX_LC) &&
-		     IS_ENABLED(CONFIG_X86_SGX);
+	enable_sgx_driver = cpu_has(c, X86_FEATURE_SGX) &&
+			    cpu_has(c, X86_FEATURE_SGX1) &&
+			    IS_ENABLED(CONFIG_X86_SGX) &&
+			    cpu_has(c, X86_FEATURE_SGX_LC);
+	enable_sgx_virt = cpu_has(c, X86_FEATURE_SGX) &&
+			  cpu_has(c, X86_FEATURE_SGX1) &&
+			  IS_ENABLED(CONFIG_X86_SGX) &&
+			  IS_ENABLED(CONFIG_X86_SGX_VIRTUALIZATION) &&
+			  enable_vmx;
 
 	if (msr & FEAT_CTL_LOCKED)
 		goto update_caps;
@@ -141,15 +157,18 @@ void init_ia32_feat_ctl(struct cpuinfo_x86 *c)
 	 * i.e. KVM is enabled, to avoid unnecessarily adding an attack vector
 	 * for the kernel, e.g. using VMX to hide malicious code.
 	 */
-	if (cpu_has(c, X86_FEATURE_VMX) && IS_ENABLED(CONFIG_KVM_INTEL)) {
+	if (enable_vmx) {
 		msr |= FEAT_CTL_VMX_ENABLED_OUTSIDE_SMX;
 
 		if (tboot)
 			msr |= FEAT_CTL_VMX_ENABLED_INSIDE_SMX;
 	}
 
-	if (enable_sgx)
-		msr |= FEAT_CTL_SGX_ENABLED | FEAT_CTL_SGX_LC_ENABLED;
+	if (enable_sgx_driver || enable_sgx_virt) {
+		msr |= FEAT_CTL_SGX_ENABLED;
+		if (enable_sgx_driver)
+			msr |= FEAT_CTL_SGX_LC_ENABLED;
+	}
 
 	wrmsrl(MSR_IA32_FEAT_CTL, msr);
 
@@ -172,10 +191,29 @@ update_caps:
 	}
 
 update_sgx:
-	if (!(msr & FEAT_CTL_SGX_ENABLED) ||
-	    !(msr & FEAT_CTL_SGX_LC_ENABLED) || !enable_sgx) {
-		if (enable_sgx)
-			pr_err_once("SGX disabled by BIOS\n");
+	if (!(msr & FEAT_CTL_SGX_ENABLED)) {
+		if (enable_sgx_driver || enable_sgx_virt)
+			pr_err_once("SGX disabled by BIOS.\n");
 		clear_sgx_caps();
+		return;
+	}
+
+	/*
+	 * VMX feature bit may be cleared due to being disabled in BIOS,
+	 * in which case SGX virtualization cannot be supported either.
+	 */
+	if (!cpu_has(c, X86_FEATURE_VMX) && enable_sgx_virt) {
+		pr_err_once("SGX virtualization disabled due to lack of VMX.\n");
+		enable_sgx_virt = 0;
+	}
+
+	if (!(msr & FEAT_CTL_SGX_LC_ENABLED) && enable_sgx_driver) {
+		if (!enable_sgx_virt) {
+			pr_err_once("SGX Launch Control is locked. Disable SGX.\n");
+			clear_sgx_caps();
+		} else {
+			pr_err_once("SGX Launch Control is locked. Support SGX virtualization only.\n");
+			clear_sgx_lc();
+		}
 	}
 }
