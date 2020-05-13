@@ -55,6 +55,8 @@ static int __sgx_virt_epc_fault(struct sgx_virt_epc *epc,
 		goto err_delete;
 	}
 
+	sgx_record_epc_page(epc_page, 0);
+
 	return 0;
 
 err_delete:
@@ -179,6 +181,7 @@ static int sgx_virt_epc_free_page(struct sgx_epc_page *epc_page)
 		return ret;
 	}
 
+	sgx_drop_epc_page(epc_page);
 	__sgx_free_epc_page(epc_page);
 	return 0;
 }
@@ -211,8 +214,15 @@ static int sgx_virt_epc_release(struct inode *inode, struct file *file)
 	 */
 	radix_tree_for_each_slot(slot, &epc->page_tree, &iter, 0) {
 		epc_page = *slot;
-		if (sgx_virt_epc_free_page(epc_page))
+		if (sgx_virt_epc_free_page(epc_page)) {
+			/*
+			 * Drop the page before adding it to the list of SECS
+			 * pages.  Moving the page off the unreclaimable list
+			 * needs to be done under the LRU's spinlock.
+			 */
+			sgx_drop_epc_page(epc_page);
 			list_add_tail(&epc_page->list, &secs_pages);
+		}
 
 		radix_tree_delete(&epc->page_tree, iter.index);
 	}
@@ -225,15 +235,17 @@ static int sgx_virt_epc_release(struct inode *inode, struct file *file)
 	mutex_lock(&virt_epc_lock);
 	list_for_each_entry_safe(epc_page, tmp, &virt_epc_zombie_pages, list) {
 		/*
-		 * Speculatively remove the page from the list of zombies, if
-		 * the page is successfully EREMOVE it will be added to the
-		 * list of free pages.  If EREMOVE fails, throw the page on the
-		 * local list, which will be spliced on at the end.
+		 * If EREMOVE fails, throw the page on the  local list, which
+		 * will be spliced on at the end.
+		 *
+		 * Note, this abuses sgx_drop_epc_page() to delete the page off
+		 * the list of zombies, but this is a very rare path (probably
+		 * never hit in production).  It's not worth special casing the
+		 * free path for this super rare case just to avoid taking the
+		 * LRU's spinlock.
 		 */
-		list_del(&epc_page->list);
-
 		if (sgx_virt_epc_free_page(epc_page))
-			list_add_tail(&epc_page->list, &secs_pages);
+			list_move_tail(&epc_page->list, &secs_pages);
 	}
 
 	if (!list_empty(&secs_pages))

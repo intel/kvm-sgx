@@ -43,37 +43,41 @@ static DECLARE_WAIT_QUEUE_HEAD(ksgxswapd_waitq);
 static struct sgx_epc_lru sgx_global_lru;
 
 /**
- * sgx_mark_page_reclaimable() - Mark a page as reclaimable
+ * sgx_record_epc_page() - Add a page to the LRU tracking
  * @page:	EPC page
  *
- * Mark a page as reclaimable and add it to the active page list. Pages
- * are automatically removed from the active list when freed.
+ * Mark a page with the specified flags and add it to the appropriate
+ * (un)reclaimable list.
  */
-void sgx_mark_page_reclaimable(struct sgx_epc_page *page)
+void sgx_record_epc_page(struct sgx_epc_page *page, unsigned long flags)
 {
 	spin_lock(&sgx_global_lru.lock);
-	page->desc |= SGX_EPC_PAGE_RECLAIMABLE;
-	list_add_tail(&page->list, &sgx_global_lru.reclaimable);
+	WARN_ON(page->desc & SGX_EPC_PAGE_RECLAIMABLE);
+	page->desc |= flags;
+	if (flags & SGX_EPC_PAGE_RECLAIMABLE)
+		list_add_tail(&page->list, &sgx_global_lru.reclaimable);
+	else
+		list_add_tail(&page->list, &sgx_global_lru.unreclaimable);
 	spin_unlock(&sgx_global_lru.lock);
 }
 
 /**
- * sgx_unmark_page_reclaimable() - Remove a page from the reclaim list
+ * sgx_drop_epc_page() - Remove a page from a LRU list
  * @page:	EPC page
  *
- * Clear the reclaimable flag and remove the page from the active page list.
+ * Clear the reclaimable flag if set and remove the page from its LRU.
  *
  * Return:
  *   0 on success,
  *   -EBUSY if the page is in the process of being reclaimed
  */
-int sgx_unmark_page_reclaimable(struct sgx_epc_page *page)
+int sgx_drop_epc_page(struct sgx_epc_page *page)
 {
 	/*
-	 * Remove the page from the active list if necessary.  If the page
-	 * is actively being reclaimed, i.e. RECLAIMABLE is set but the
-	 * page isn't on the active list, return -EBUSY as we can't free
-	 * the page at this time since it is "owned" by the reclaimer.
+	 * Remove the page from its LRU list.  If the page is actively being
+	 * reclaimed, i.e. RECLAIMABLE is set but the page isn't on a LRU list,
+	 * return -EBUSY as we can't free the page at this time since it is
+	 * "owned" by the reclaimer.
 	 */
 	spin_lock(&sgx_global_lru.lock);
 	if (page->desc & SGX_EPC_PAGE_RECLAIMABLE) {
@@ -81,9 +85,9 @@ int sgx_unmark_page_reclaimable(struct sgx_epc_page *page)
 			spin_unlock(&sgx_global_lru.lock);
 			return -EBUSY;
 		}
-		list_del(&page->list);
 		page->desc &= ~SGX_EPC_PAGE_RECLAIMABLE;
 	}
+	list_del(&page->list);
 	spin_unlock(&sgx_global_lru.lock);
 
 	return 0;
@@ -298,6 +302,7 @@ static void sgx_reclaimer_write(struct sgx_epc_page *epc_page,
 
 	if (!encl->secs_child_cnt) {
 		if (atomic_read(&encl->flags) & SGX_ENCL_DEAD) {
+			sgx_drop_epc_page(encl->secs.epc_page);
 			sgx_free_epc_page(encl->secs.epc_page);
 			encl->secs.epc_page = NULL;
 		} else if (atomic_read(&encl->flags) & SGX_ENCL_INITIALIZED) {
@@ -308,6 +313,7 @@ static void sgx_reclaimer_write(struct sgx_epc_page *epc_page,
 
 			sgx_encl_ewb(encl->secs.epc_page, &secs_backing);
 
+			sgx_drop_epc_page(encl->secs.epc_page);
 			sgx_free_epc_page(encl->secs.epc_page);
 			encl->secs.epc_page = NULL;
 
@@ -411,7 +417,6 @@ skip:
 
 	cond_resched();
 }
-
 
 static void sgx_sanitize_section(struct sgx_epc_section *section)
 {
