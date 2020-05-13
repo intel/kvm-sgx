@@ -120,6 +120,7 @@ static struct sgx_encl_page *sgx_encl_load_page(struct sgx_encl *encl,
 		epc_page = sgx_encl_eldu(&encl->secs, NULL);
 		if (IS_ERR(epc_page))
 			return ERR_CAST(epc_page);
+		sgx_record_epc_page(epc_page, 0);
 	}
 
 	epc_page = sgx_encl_eldu(entry, encl->secs.epc_page);
@@ -127,7 +128,7 @@ static struct sgx_encl_page *sgx_encl_load_page(struct sgx_encl *encl,
 		return ERR_CAST(epc_page);
 
 	encl->secs_child_cnt++;
-	sgx_mark_page_reclaimable(entry->epc_page);
+	sgx_record_epc_page(entry->epc_page, SGX_EPC_PAGE_RECLAIMABLE);
 
 	return entry;
 }
@@ -480,7 +481,7 @@ void sgx_encl_destroy(struct sgx_encl *encl)
 			 * The page and its radix tree entry cannot be freed
 			 * if the page is being held by the reclaimer.
 			 */
-			if (sgx_unmark_page_reclaimable(entry->epc_page))
+			if (sgx_drop_epc_page(entry->epc_page))
 				continue;
 
 			sgx_free_epc_page(entry->epc_page);
@@ -494,6 +495,7 @@ void sgx_encl_destroy(struct sgx_encl *encl)
 	}
 
 	if (!encl->secs_child_cnt && encl->secs.epc_page) {
+		sgx_drop_epc_page(encl->secs.epc_page);
 		sgx_free_epc_page(encl->secs.epc_page);
 		encl->secs.epc_page = NULL;
 	}
@@ -507,6 +509,7 @@ void sgx_encl_destroy(struct sgx_encl *encl)
 		va_page = list_first_entry(&encl->va_pages, struct sgx_va_page,
 					   list);
 		list_del(&va_page->list);
+		sgx_drop_epc_page(va_page->epc_page);
 		sgx_free_epc_page(va_page->epc_page);
 		kfree(va_page);
 	}
@@ -709,6 +712,7 @@ struct sgx_epc_page *sgx_alloc_va_page(struct sgx_encl *encl)
 		sgx_free_epc_page(epc_page);
 		return ERR_PTR(-EFAULT);
 	}
+	sgx_record_epc_page(epc_page, 0);
 
 	epc_page->owner = encl;
 	return epc_page;

@@ -55,6 +55,8 @@ static int __sgx_virt_epc_fault(struct sgx_virt_epc *epc,
 		goto err_delete;
 	}
 
+	sgx_record_epc_page(epc_page, 0);
+
 	return 0;
 
 err_delete:
@@ -179,6 +181,7 @@ static int sgx_virt_epc_free_page(struct sgx_epc_page *epc_page)
 		return ret;
 	}
 
+	sgx_drop_epc_page(epc_page);
 	__sgx_free_epc_page(epc_page);
 	return 0;
 }
