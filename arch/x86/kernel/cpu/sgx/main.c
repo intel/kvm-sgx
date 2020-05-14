@@ -479,10 +479,14 @@ static unsigned long sgx_nr_free_pages(void)
 	return cnt;
 }
 
+static bool sgx_can_reclaim(void)
+{
+	return !list_empty(&sgx_global_lru.reclaimable);
+}
+
 static bool sgx_should_reclaim(unsigned long watermark)
 {
-	return sgx_nr_free_pages() < watermark &&
-	       !list_empty(&sgx_global_lru.reclaimable);
+	return sgx_nr_free_pages() < watermark && sgx_can_reclaim();
 }
 
 static int ksgxswapd(void *p)
@@ -611,7 +615,7 @@ struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 			break;
 		}
 
-		if (list_empty(&sgx_global_lru.reclaimable))
+		if (!sgx_can_reclaim())
 			return ERR_PTR(-ENOMEM);
 
 		if (!reclaim) {
