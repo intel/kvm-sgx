@@ -332,12 +332,11 @@ out:
  */
 static void sgx_reclaim_pages(void)
 {
-	struct sgx_epc_page *chunk[SGX_NR_TO_SCAN];
 	struct sgx_backing backing[SGX_NR_TO_SCAN];
+	struct sgx_epc_page *epc_page, *tmp;
 	struct sgx_epc_section *section;
 	struct sgx_encl_page *encl_page;
-	struct sgx_epc_page *epc_page;
-	int cnt = 0;
+	LIST_HEAD(iso);
 	int ret;
 	int i;
 
@@ -348,23 +347,27 @@ static void sgx_reclaim_pages(void)
 
 		epc_page = list_first_entry(&sgx_global_lru.reclaimable,
 					    struct sgx_epc_page, list);
-		list_del_init(&epc_page->list);
 		encl_page = epc_page->owner;
 
 		if (kref_get_unless_zero(&encl_page->encl->refcount) != 0) {
 			epc_page->desc |= SGX_EPC_PAGE_RECLAIM_IN_PROGRESS;
-			chunk[cnt++] = epc_page;
+			list_move_tail(&epc_page->list, &iso);
 		} else {
-			/* The owner is freeing the page. No need to add the
-			 * page back to the list of reclaimable pages.
+			/*
+			 * The owner is freeing the page, remove it from the
+			 * LRU list.
 			 */
 			epc_page->desc &= ~SGX_EPC_PAGE_RECLAIMABLE;
+			list_del_init(&epc_page->list);
 		}
 	}
 	spin_unlock(&sgx_global_lru.lock);
 
-	for (i = 0; i < cnt; i++) {
-		epc_page = chunk[i];
+	if (list_empty(&iso))
+		goto out;
+
+	i = 0;
+	list_for_each_entry_safe(epc_page, tmp, &iso, list) {
 		encl_page = epc_page->owner;
 
 		if (!sgx_reclaimer_age(epc_page))
@@ -376,6 +379,7 @@ static void sgx_reclaim_pages(void)
 		if (ret)
 			goto skip;
 
+		i++;
 		mutex_lock(&encl_page->encl->lock);
 		encl_page->desc |= SGX_ENCL_PAGE_RECLAIMED;
 		mutex_unlock(&encl_page->encl->lock);
@@ -384,28 +388,20 @@ static void sgx_reclaim_pages(void)
 skip:
 		spin_lock(&sgx_global_lru.lock);
 		epc_page->desc &= ~SGX_EPC_PAGE_RECLAIM_IN_PROGRESS;
-		list_add_tail(&epc_page->list, &sgx_global_lru.reclaimable);
+		list_move_tail(&epc_page->list, &sgx_global_lru.reclaimable);
 		spin_unlock(&sgx_global_lru.lock);
 
 		kref_put(&encl_page->encl->refcount, sgx_encl_release);
-
-		chunk[i] = NULL;
 	}
 
-	for (i = 0; i < cnt; i++) {
-		epc_page = chunk[i];
-		if (epc_page)
-			sgx_reclaimer_block(epc_page);
-	}
+	list_for_each_entry(epc_page, &iso, list)
+		sgx_reclaimer_block(epc_page);
 
-	for (i = 0; i < cnt; i++) {
-		epc_page = chunk[i];
-		if (!epc_page)
-			continue;
-
+	i = 0;
+	list_for_each_entry_safe(epc_page, tmp, &iso, list) {
 		encl_page = epc_page->owner;
 		sgx_reclaimer_write(epc_page, &backing[i]);
-		sgx_encl_put_backing(&backing[i], true);
+		sgx_encl_put_backing(&backing[i++], true);
 
 		kref_put(&encl_page->encl->refcount, sgx_encl_release);
 		epc_page->desc &= ~(SGX_EPC_PAGE_RECLAIMABLE |
@@ -413,11 +409,12 @@ skip:
 
 		section = sgx_get_epc_section(epc_page);
 		spin_lock(&section->lock);
-		list_add_tail(&epc_page->list, &section->page_list);
+		list_move_tail(&epc_page->list, &section->page_list);
 		section->free_cnt++;
 		spin_unlock(&section->lock);
 	}
 
+out:
 	cond_resched();
 }
 
