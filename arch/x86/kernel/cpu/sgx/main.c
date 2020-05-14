@@ -44,6 +44,11 @@ static struct task_struct *ksgxswapd_tsk;
 static DECLARE_WAIT_QUEUE_HEAD(ksgxswapd_waitq);
 static struct sgx_epc_lru sgx_global_lru;
 
+static inline struct sgx_epc_lru *sgx_lru(struct sgx_epc_page *epc_page)
+{
+	return &sgx_global_lru;
+}
+
 /**
  * sgx_record_epc_page() - Add a page to the LRU tracking
  * @page:	EPC page
@@ -54,14 +59,16 @@ static struct sgx_epc_lru sgx_global_lru;
  */
 void sgx_record_epc_page(struct sgx_epc_page *page, unsigned long flags)
 {
-	spin_lock(&sgx_global_lru.lock);
+	struct sgx_epc_lru *lru = sgx_lru(page);
+
+	spin_lock(&lru->lock);
 	WARN_ON(page->desc & SGX_EPC_PAGE_RECLAIM_FLAGS);
 	page->desc |= flags;
 	if (flags & SGX_EPC_PAGE_RECLAIMABLE)
-		list_add_tail(&page->list, &sgx_global_lru.reclaimable);
+		list_add_tail(&page->list, &lru->reclaimable);
 	else
-		list_add_tail(&page->list, &sgx_global_lru.unreclaimable);
-	spin_unlock(&sgx_global_lru.lock);
+		list_add_tail(&page->list, &lru->unreclaimable);
+	spin_unlock(&lru->lock);
 }
 
 /**
@@ -76,19 +83,21 @@ void sgx_record_epc_page(struct sgx_epc_page *page, unsigned long flags)
  */
 int sgx_drop_epc_page(struct sgx_epc_page *page)
 {
+	struct sgx_epc_lru *lru = sgx_lru(page);
+
 	/*
 	 * Remove the page from its LRU list.  If the page is actively being
 	 * reclaimed, return -EBUSY as we can't free the page at this time
 	 * since it is "owned" by the reclaimer.
 	 */
-	spin_lock(&sgx_global_lru.lock);
+	spin_lock(&lru->lock);
 	if ((page->desc & SGX_EPC_PAGE_RECLAIMABLE) &&
 	    (page->desc & SGX_EPC_PAGE_RECLAIM_IN_PROGRESS)) {
-		spin_unlock(&sgx_global_lru.lock);
+		spin_unlock(&lru->lock);
 		return -EBUSY;
 	}
 	list_del(&page->list);
-	spin_unlock(&sgx_global_lru.lock);
+	spin_unlock(&lru->lock);
 
 	page->desc &= ~SGX_EPC_PAGE_RECLAIM_FLAGS;
 
@@ -345,6 +354,7 @@ static int sgx_reclaim_pages(int nr_to_scan, bool ignore_age)
 	struct sgx_epc_page *epc_page, *tmp;
 	struct sgx_epc_section *section;
 	struct sgx_encl_page *encl_page;
+	struct sgx_epc_lru *lru;
 	LIST_HEAD(iso);
 	int ret;
 	int i;
@@ -398,10 +408,11 @@ static int sgx_reclaim_pages(int nr_to_scan, bool ignore_age)
 		continue;
 
 skip:
-		spin_lock(&sgx_global_lru.lock);
+		lru = sgx_lru(epc_page);
+		spin_lock(&lru->lock);
 		epc_page->desc &= ~SGX_EPC_PAGE_RECLAIM_IN_PROGRESS;
-		list_move_tail(&epc_page->list, &sgx_global_lru.reclaimable);
-		spin_unlock(&sgx_global_lru.lock);
+		list_move_tail(&epc_page->list, &lru->reclaimable);
+		spin_unlock(&lru->lock);
 
 		kref_put(&encl_page->encl->refcount, sgx_encl_release);
 	}
