@@ -335,8 +335,10 @@ out:
  * reclaim them to the enclave's private shmem files. Skip the pages, which have
  * been accessed since the last scan. Move those pages to the tail of active
  * page pool so that the pages get scanned in LRU like fashion.
+ *
+ * Return: number of EPC pages reclaimed
  */
-static void sgx_reclaim_pages(int nr_to_scan)
+static int sgx_reclaim_pages(int nr_to_scan)
 {
 	struct sgx_backing backing[SGX_MAX_NR_TO_RECLAIM];
 	struct sgx_epc_page *epc_page, *tmp;
@@ -423,6 +425,7 @@ skip:
 
 out:
 	cond_resched();
+	return i;
 }
 
 static void sgx_sanitize_section(struct sgx_epc_section *section)
