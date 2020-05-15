@@ -52,7 +52,7 @@ static struct sgx_epc_lru sgx_global_lru;
 void sgx_record_epc_page(struct sgx_epc_page *page, unsigned long flags)
 {
 	spin_lock(&sgx_global_lru.lock);
-	WARN_ON(page->desc & SGX_EPC_PAGE_RECLAIMABLE);
+	WARN_ON(page->desc & SGX_EPC_PAGE_RECLAIM_FLAGS);
 	page->desc |= flags;
 	if (flags & SGX_EPC_PAGE_RECLAIMABLE)
 		list_add_tail(&page->list, &sgx_global_lru.reclaimable);
@@ -75,13 +75,12 @@ int sgx_drop_epc_page(struct sgx_epc_page *page)
 {
 	/*
 	 * Remove the page from its LRU list.  If the page is actively being
-	 * reclaimed, i.e. RECLAIMABLE is set but the page isn't on a LRU list,
-	 * return -EBUSY as we can't free the page at this time since it is
-	 * "owned" by the reclaimer.
+	 * reclaimed, return -EBUSY as we can't free the page at this time
+	 * since it is "owned" by the reclaimer.
 	 */
 	spin_lock(&sgx_global_lru.lock);
 	if (page->desc & SGX_EPC_PAGE_RECLAIMABLE) {
-		if (list_empty(&page->list)) {
+		if (page->desc & SGX_EPC_PAGE_RECLAIM_IN_PROGRESS) {
 			spin_unlock(&sgx_global_lru.lock);
 			return -EBUSY;
 		}
@@ -352,13 +351,15 @@ static void sgx_reclaim_pages(void)
 		list_del_init(&epc_page->list);
 		encl_page = epc_page->owner;
 
-		if (kref_get_unless_zero(&encl_page->encl->refcount) != 0)
+		if (kref_get_unless_zero(&encl_page->encl->refcount) != 0) {
+			epc_page->desc |= SGX_EPC_PAGE_RECLAIM_IN_PROGRESS;
 			chunk[cnt++] = epc_page;
-		else
+		} else {
 			/* The owner is freeing the page. No need to add the
 			 * page back to the list of reclaimable pages.
 			 */
 			epc_page->desc &= ~SGX_EPC_PAGE_RECLAIMABLE;
+		}
 	}
 	spin_unlock(&sgx_global_lru.lock);
 
@@ -382,6 +383,7 @@ static void sgx_reclaim_pages(void)
 
 skip:
 		spin_lock(&sgx_global_lru.lock);
+		epc_page->desc &= ~SGX_EPC_PAGE_RECLAIM_IN_PROGRESS;
 		list_add_tail(&epc_page->list, &sgx_global_lru.reclaimable);
 		spin_unlock(&sgx_global_lru.lock);
 
@@ -406,7 +408,8 @@ skip:
 		sgx_encl_put_backing(&backing[i], true);
 
 		kref_put(&encl_page->encl->refcount, sgx_encl_release);
-		epc_page->desc &= ~SGX_EPC_PAGE_RECLAIMABLE;
+		epc_page->desc &= ~(SGX_EPC_PAGE_RECLAIMABLE |
+				    SGX_EPC_PAGE_RECLAIM_IN_PROGRESS);
 
 		section = sgx_get_epc_section(epc_page);
 		spin_lock(&section->lock);
@@ -634,14 +637,15 @@ void __sgx_free_epc_page(struct sgx_epc_page *page)
  */
 void sgx_free_epc_page(struct sgx_epc_page *page)
 {
+	unsigned long flags = page->desc & SGX_EPC_PAGE_RECLAIM_FLAGS;
 	int ret;
 
 	/*
 	 * Don't take sgx_active_page_list_lock when asserting the page isn't
-	 * reclaimable, missing a WARN in the very rare case is preferable to
-	 * unnecessarily taking a global lock in the common case.
+	 * tagged with reclaim flags, missing a WARN in the very rare case is
+	 * preferable to unnecessarily taking a global lock in the common case.
 	 */
-	WARN_ON_ONCE(page->desc & SGX_EPC_PAGE_RECLAIMABLE);
+	WARN_ONCE(flags, "sgx: reclaim flags set during free: %lx", flags);
 
 	ret = __eremove(sgx_get_epc_addr(page));
 	if (WARN_ONCE(ret, "EREMOVE returned %d (0x%x)", ret, ret))
