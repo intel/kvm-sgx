@@ -466,7 +466,7 @@ skip:
 
 #ifdef CONFIG_CGROUP_SGX_EPC
 		if (epc_page->epc_cg) {
-			sgx_epc_cgroup_uncharge(epc_page->epc_cg);
+			sgx_epc_cgroup_uncharge(epc_page->epc_cg, true);
 			epc_page->epc_cg = NULL;
 		}
 #endif
@@ -827,7 +827,7 @@ struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 		WARN_ON(entry->epc_cg);
 		entry->epc_cg = epc_cg;
 	} else {
-		sgx_epc_cgroup_uncharge(epc_cg);
+		sgx_epc_cgroup_uncharge(epc_cg, false);
 	}
 #endif
 
@@ -849,7 +849,7 @@ void __sgx_free_epc_page(struct sgx_epc_page *page)
 
 #ifdef CONFIG_CGROUP_SGX_EPC
 	if (page->epc_cg) {
-		sgx_epc_cgroup_uncharge(page->epc_cg);
+		sgx_epc_cgroup_uncharge(page->epc_cg, false);
 		page->epc_cg = NULL;
 	}
 #endif
