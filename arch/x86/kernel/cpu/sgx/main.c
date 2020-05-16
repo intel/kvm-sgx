@@ -17,6 +17,7 @@
 #include "driver.h"
 #include "encl.h"
 #include "encls.h"
+#include "epc_cgroup.h"
 #include "virt.h"
 
 /* A per-cpu cache for the last known values of IA32_SGXLEPUBKEYHASHx MSRs. */
@@ -46,6 +47,11 @@ static struct sgx_epc_lru sgx_global_lru;
 
 static inline struct sgx_epc_lru *sgx_lru(struct sgx_epc_page *epc_page)
 {
+#ifdef CONFIG_CGROUP_SGX_EPC
+	if (epc_page->epc_cg)
+		return &epc_page->epc_cg->lru;
+#endif
+
 	return &sgx_global_lru;
 }
 
@@ -381,6 +387,7 @@ void sgx_isolate_epc_pages(struct sgx_epc_lru *lru, int *nr_to_scan,
  * sgx_reclaim_epc_pages() - Reclaim EPC pages from the consumers
  * @nr_to_scan:		Number of EPC pages to scan for reclaim
  * @ignore_age:		Reclaim a page even if it is young
+ * @epc_cg:		EPC cgroup from which to reclaim
  *
  * Take a fixed number of pages from the head of the active page pool and
  * reclaim them to the enclave's private shmem files. Skip the pages, which have
@@ -389,7 +396,8 @@ void sgx_isolate_epc_pages(struct sgx_epc_lru *lru, int *nr_to_scan,
  *
  * Return: number of EPC pages reclaimed
  */
-int sgx_reclaim_epc_pages(int nr_to_scan, bool ignore_age)
+int sgx_reclaim_epc_pages(int nr_to_scan, bool ignore_age,
+			  struct sgx_epc_cgroup *epc_cg)
 {
 	struct sgx_backing backing[SGX_MAX_NR_TO_RECLAIM];
 	struct sgx_epc_page *epc_page, *tmp;
@@ -400,7 +408,17 @@ int sgx_reclaim_epc_pages(int nr_to_scan, bool ignore_age)
 	int i = 0;
 	int ret;
 
-	sgx_isolate_epc_pages(&sgx_global_lru, &nr_to_scan, &iso);
+        /*
+         * If we're not targeting a specific cgroup, take from the global
+         * list first, even when cgroups are enabled.  If we somehow have
+         * pages on the global LRU then they should get reclaimed asap.
+         */
+        if (!IS_ENABLED(CONFIG_CGROUP_SGX_EPC) || !epc_cg)
+                sgx_isolate_epc_pages(&sgx_global_lru, &nr_to_scan, &iso);
+
+#ifdef CONFIG_CGROUP_SGX_EPC
+	sgx_epc_cgroup_isolate_pages(epc_cg, &nr_to_scan, &iso);
+#endif
 
 	if (list_empty(&iso))
 		goto out;
@@ -445,6 +463,13 @@ skip:
 
 		kref_put(&encl_page->encl->refcount, sgx_encl_release);
 		epc_page->desc &= ~SGX_EPC_PAGE_RECLAIM_FLAGS;
+
+#ifdef CONFIG_CGROUP_SGX_EPC
+		if (epc_page->epc_cg) {
+			sgx_epc_cgroup_uncharge(epc_page->epc_cg);
+			epc_page->epc_cg = NULL;
+		}
+#endif
 
 		section = sgx_get_epc_section(epc_page);
 		spin_lock(&section->lock);
@@ -634,7 +659,11 @@ static unsigned long sgx_nr_free_pages(void)
 
 static bool sgx_can_reclaim(void)
 {
+#ifdef CONFIG_CGROUP_SGX_EPC
+	return !sgx_epc_cgroup_lru_empty(NULL);
+#else
 	return !list_empty(&sgx_global_lru.reclaimable);
+#endif
 }
 
 static bool sgx_should_reclaim(unsigned long watermark)
@@ -676,7 +705,7 @@ static int ksgxswapd(void *p)
 				     sgx_should_reclaim(SGX_NR_HIGH_PAGES));
 
 		if (sgx_should_reclaim(SGX_NR_HIGH_PAGES))
-			sgx_reclaim_epc_pages(SGX_NR_TO_SCAN, false);
+			sgx_reclaim_epc_pages(SGX_NR_TO_SCAN, false, NULL);
 	}
 
 	return 0;
@@ -760,6 +789,13 @@ struct sgx_epc_page *__sgx_alloc_epc_page(void)
 struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 {
 	struct sgx_epc_page *entry;
+#ifdef CONFIG_CGROUP_SGX_EPC
+	struct sgx_epc_cgroup *epc_cg;
+
+	epc_cg = sgx_epc_cgroup_try_charge(current->mm, reclaim);
+	if (IS_ERR(epc_cg))
+		return ERR_CAST(epc_cg);
+#endif
 
 	for ( ; ; ) {
 		entry = __sgx_alloc_epc_page();
@@ -768,8 +804,10 @@ struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 			break;
 		}
 
-		if (!sgx_can_reclaim())
-			return ERR_PTR(-ENOMEM);
+		if (!sgx_can_reclaim()) {
+			entry = ERR_PTR(-ENOMEM);
+			break;
+		}
 
 		if (!reclaim) {
 			entry = ERR_PTR(-EBUSY);
@@ -781,8 +819,17 @@ struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 			break;
 		}
 
-		sgx_reclaim_epc_pages(SGX_NR_TO_SCAN, false);
+		sgx_reclaim_epc_pages(SGX_NR_TO_SCAN, false, NULL);
 	}
+
+#ifdef CONFIG_CGROUP_SGX_EPC
+	if (!IS_ERR(entry)) {
+		WARN_ON(entry->epc_cg);
+		entry->epc_cg = epc_cg;
+	} else {
+		sgx_epc_cgroup_uncharge(epc_cg);
+	}
+#endif
 
 	if (sgx_should_reclaim(SGX_NR_LOW_PAGES))
 		wake_up(&ksgxswapd_waitq);
@@ -799,6 +846,13 @@ struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 void __sgx_free_epc_page(struct sgx_epc_page *page)
 {
 	struct sgx_epc_section *section = sgx_get_epc_section(page);
+
+#ifdef CONFIG_CGROUP_SGX_EPC
+	if (page->epc_cg) {
+		sgx_epc_cgroup_uncharge(page->epc_cg);
+		page->epc_cg = NULL;
+	}
+#endif
 
 	spin_lock(&section->lock);
 	list_add_tail(&page->list, &section->page_list);

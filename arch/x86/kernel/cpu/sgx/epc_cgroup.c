@@ -396,7 +396,7 @@ static int sgx_epc_cgroup_reclaim_pages(unsigned long nr_pages,
 	nr_pages = max(nr_pages, SGX_EPC_RECLAIM_MIN_PAGES);
 	nr_pages = min(nr_pages, SGX_EPC_RECLAIM_MAX_PAGES);
 
-	return sgx_reclaim_epc_pages(nr_pages, rc->ignore_age);
+	return sgx_reclaim_epc_pages(nr_pages, rc->ignore_age, rc->epc_cg);
 }
 
 static int sgx_epc_cgroup_reclaim_failed(struct sgx_epc_reclaim_control *rc)
