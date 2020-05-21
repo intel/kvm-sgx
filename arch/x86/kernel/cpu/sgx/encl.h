@@ -119,7 +119,7 @@ int sgx_encl_test_and_clear_young(struct mm_struct *mm,
 struct sgx_encl_page *sgx_encl_reserve_page(struct sgx_encl *encl,
 					    unsigned long addr);
 
-struct sgx_epc_page *sgx_alloc_va_page(void);
+struct sgx_epc_page *sgx_alloc_va_page(struct sgx_encl *encl);
 unsigned int sgx_alloc_va_slot(struct sgx_va_page *va_page);
 void sgx_free_va_slot(struct sgx_va_page *va_page, unsigned int offset);
 bool sgx_va_page_full(struct sgx_va_page *va_page);

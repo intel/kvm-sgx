@@ -694,7 +694,7 @@ struct sgx_encl_page *sgx_encl_reserve_page(struct sgx_encl *encl,
  *   a VA page,
  *   -errno otherwise
  */
-struct sgx_epc_page *sgx_alloc_va_page(void)
+struct sgx_epc_page *sgx_alloc_va_page(struct sgx_encl *encl)
 {
 	struct sgx_epc_page *epc_page;
 	int ret;
@@ -710,6 +710,7 @@ struct sgx_epc_page *sgx_alloc_va_page(void)
 		return ERR_PTR(-EFAULT);
 	}
 
+	epc_page->owner = encl;
 	return epc_page;
 }
 
