@@ -45,6 +45,7 @@ static struct sgx_epc_lru sgx_global_lru;
 /**
  * sgx_record_epc_page() - Add a page to the LRU tracking
  * @page:	EPC page
+ * @flags:	Reclaim flags for the page.
  *
  * Mark a page with the specified flags and add it to the appropriate
  * (un)reclaimable list.
@@ -79,15 +80,15 @@ int sgx_drop_epc_page(struct sgx_epc_page *page)
 	 * since it is "owned" by the reclaimer.
 	 */
 	spin_lock(&sgx_global_lru.lock);
-	if (page->desc & SGX_EPC_PAGE_RECLAIMABLE) {
-		if (page->desc & SGX_EPC_PAGE_RECLAIM_IN_PROGRESS) {
-			spin_unlock(&sgx_global_lru.lock);
-			return -EBUSY;
-		}
-		page->desc &= ~SGX_EPC_PAGE_RECLAIMABLE;
+	if ((page->desc & SGX_EPC_PAGE_RECLAIMABLE) &&
+	    (page->desc & SGX_EPC_PAGE_RECLAIM_IN_PROGRESS)) {
+		spin_unlock(&sgx_global_lru.lock);
+		return -EBUSY;
 	}
 	list_del(&page->list);
 	spin_unlock(&sgx_global_lru.lock);
+
+	page->desc &= ~SGX_EPC_PAGE_RECLAIM_FLAGS;
 
 	return 0;
 }
@@ -348,6 +349,8 @@ static void sgx_reclaim_pages(void)
 		epc_page = list_first_entry(&sgx_global_lru.reclaimable,
 					    struct sgx_epc_page, list);
 		encl_page = epc_page->owner;
+		if (WARN_ON_ONCE(!(epc_page->desc & SGX_EPC_PAGE_ENCLAVE)))
+			continue;
 
 		if (kref_get_unless_zero(&encl_page->encl->refcount) != 0) {
 			epc_page->desc |= SGX_EPC_PAGE_RECLAIM_IN_PROGRESS;
@@ -404,8 +407,7 @@ skip:
 		sgx_encl_put_backing(&backing[i++], true);
 
 		kref_put(&encl_page->encl->refcount, sgx_encl_release);
-		epc_page->desc &= ~(SGX_EPC_PAGE_RECLAIMABLE |
-				    SGX_EPC_PAGE_RECLAIM_IN_PROGRESS);
+		epc_page->desc &= ~SGX_EPC_PAGE_RECLAIM_FLAGS;
 
 		section = sgx_get_epc_section(epc_page);
 		spin_lock(&section->lock);
