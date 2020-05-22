@@ -83,6 +83,9 @@ int sgx_drop_epc_page(struct sgx_epc_page *page);
 void sgx_isolate_epc_pages(struct sgx_epc_lru *lru, int *nr_to_scan,
 			   struct list_head *dst);
 int sgx_reclaim_epc_pages(int nr_to_scan, bool ignore_age);
+bool sgx_epc_oom(struct sgx_epc_lru *lru);
+void sgx_epc_oom_zap(void *owner, struct mm_struct *mm, unsigned long start,
+		     unsigned long end, const struct vm_operations_struct *ops);
 
 struct sgx_epc_page *__sgx_alloc_epc_page(void);
 struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim);

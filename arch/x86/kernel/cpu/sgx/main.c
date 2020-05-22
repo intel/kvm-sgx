@@ -124,13 +124,13 @@ static bool sgx_reclaimer_age(struct sgx_epc_page *epc_page)
 
 		mmput_async(encl_mm->mm);
 
-		if (!ret || (atomic_read(&encl->flags) & SGX_ENCL_DEAD))
+		if (!ret || (atomic_read(&encl->flags) & SGX_ENCL_DEAD_OR_OOM))
 			break;
 	}
 
 	srcu_read_unlock(&encl->srcu, idx);
 
-	if (!ret && !(atomic_read(&encl->flags) & SGX_ENCL_DEAD))
+	if (!ret && !(atomic_read(&encl->flags) & SGX_ENCL_DEAD_OR_OOM))
 		return false;
 
 	return true;
@@ -174,6 +174,7 @@ static void sgx_reclaimer_block(struct sgx_epc_page *epc_page)
 
 	mutex_lock(&encl->lock);
 
+	/* Note, EBLOCK can only be skipped if the enclave if fully dead. */
 	if (!(atomic_read(&encl->flags) & SGX_ENCL_DEAD)) {
 		ret = __eblock(sgx_get_epc_addr(epc_page));
 		if (encls_failed(ret))
@@ -301,6 +302,7 @@ static void sgx_reclaimer_write(struct sgx_epc_page *epc_page,
 
 	mutex_lock(&encl->lock);
 
+	/* Note, EWB can only be skipped if the enclave if fully dead. */
 	if (atomic_read(&encl->flags) & SGX_ENCL_DEAD) {
 		ret = __eremove(sgx_get_epc_addr(epc_page));
 		ENCLS_WARN(ret, "EREMOVE");
@@ -454,6 +456,142 @@ skip:
 out:
 	cond_resched();
 	return i;
+}
+
+static bool sgx_oom_get_ref(struct sgx_epc_page *epc_page)
+{
+	struct sgx_encl *encl;
+
+	if (epc_page->desc & SGX_EPC_PAGE_ENCLAVE)
+		encl = ((struct sgx_encl_page *)epc_page->owner)->encl;
+	else if (epc_page->desc & SGX_EPC_PAGE_VERSION_ARRAY)
+		encl = epc_page->owner;
+	else
+		return false;
+
+	return kref_get_unless_zero(&encl->refcount);
+}
+
+static struct sgx_epc_page *sgx_oom_get_victim(struct sgx_epc_lru *lru)
+{
+	struct sgx_epc_page *epc_page, *tmp;
+
+	if (list_empty(&lru->unreclaimable))
+		return NULL;
+
+	list_for_each_entry_safe(epc_page, tmp, &lru->unreclaimable, list) {
+		list_del_init(&epc_page->list);
+
+		if (sgx_oom_get_ref(epc_page))
+			return epc_page;
+	}
+	return NULL;
+}
+
+void sgx_epc_oom_zap(void *owner, struct mm_struct *mm, unsigned long start,
+		     unsigned long end, const struct vm_operations_struct *ops)
+{
+	struct vm_area_struct *vma, *tmp;
+	unsigned long vm_end;
+
+	vma = find_vma(mm, start);
+	if (!vma || vma->vm_ops != ops || vma->vm_private_data != owner ||
+	    vma->vm_start >= end)
+		return;
+
+	for (tmp = vma; tmp->vm_start < end; tmp = tmp->vm_next) {
+		do {
+			vm_end = tmp->vm_end;
+			tmp = tmp->vm_next;
+		} while (tmp && tmp->vm_ops == ops &&
+			 vma->vm_private_data == owner && tmp->vm_start < end);
+
+		zap_page_range(vma, vma->vm_start, vm_end - vma->vm_start);
+
+		if (!tmp)
+			break;
+	}
+}
+
+static void sgx_oom_encl(struct sgx_encl *encl)
+{
+	unsigned long mm_list_version;
+	struct sgx_encl_mm *encl_mm;
+	int encl_flags;
+	int idx;
+
+	/* Set OOM under encl->lock to ensure faults won't insert new PTEs. */
+	mutex_lock(&encl->lock);
+	encl_flags = atomic_fetch_or(SGX_ENCL_OOM, &encl->flags);
+	mutex_unlock(&encl->lock);
+
+	if ((encl_flags & SGX_ENCL_DEAD_OR_OOM) ||
+	    !(encl_flags & SGX_ENCL_CREATED))
+		goto out;
+
+	do {
+		mm_list_version = encl->mm_list_version;
+
+		/* Pairs with smp_rmb() in sgx_encl_mm_add(). */
+		smp_rmb();
+
+		idx = srcu_read_lock(&encl->srcu);
+
+		list_for_each_entry_rcu(encl_mm, &encl->mm_list, list) {
+			if (!mmget_not_zero(encl_mm->mm))
+				continue;
+
+			mmap_read_lock(encl_mm->mm);
+
+			sgx_epc_oom_zap(encl, encl_mm->mm, encl->base,
+					encl->base + encl->size, &sgx_vm_ops);
+
+			mmap_read_unlock(encl_mm->mm);
+
+			mmput_async(encl_mm->mm);
+		}
+
+		srcu_read_unlock(&encl->srcu, idx);
+	} while (WARN_ON_ONCE(encl->mm_list_version != mm_list_version));
+
+	mutex_lock(&encl->lock);
+	sgx_encl_destroy(encl);
+	mutex_unlock(&encl->lock);
+
+out:
+	kref_put(&encl->refcount, sgx_encl_release);
+}
+
+static inline void sgx_oom_encl_page(struct sgx_encl_page *encl_page)
+{
+	return sgx_oom_encl(encl_page->encl);
+}
+
+/**
+ * sgx_epc_oom - invoke EPC out-of-memory handling on target LRU
+ * @lru		LRU that is OOM
+ *
+ * Return: %true if a victim was found and kicked.
+ */
+bool sgx_epc_oom(struct sgx_epc_lru *lru)
+{
+	struct sgx_epc_page *victim;
+
+	spin_lock(&lru->lock);
+	victim = sgx_oom_get_victim(lru);
+	spin_unlock(&lru->lock);
+
+	if (!victim)
+		return false;
+
+	if (victim->desc & SGX_EPC_PAGE_ENCLAVE)
+		sgx_oom_encl_page(victim->owner);
+	else if (victim->desc & SGX_EPC_PAGE_VERSION_ARRAY)
+		sgx_oom_encl(victim->owner);
+	else
+		WARN_ON_ONCE(1);
+
+	return true;
 }
 
 static void sgx_sanitize_section(struct sgx_epc_section *section)

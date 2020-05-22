@@ -56,6 +56,9 @@ enum sgx_encl_flags {
 	SGX_ENCL_DEBUG		= BIT(2),
 	SGX_ENCL_DEAD		= BIT(3),
 	SGX_ENCL_IOCTL		= BIT(4),
+	SGX_ENCL_OOM		= BIT(5),
+
+	SGX_ENCL_DEAD_OR_OOM	= SGX_ENCL_DEAD | SGX_ENCL_OOM,
 };
 
 struct sgx_encl_mm {
