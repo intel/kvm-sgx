@@ -467,7 +467,7 @@ static bool sgx_oom_get_ref(struct sgx_epc_page *epc_page)
 	else if (epc_page->desc & SGX_EPC_PAGE_VERSION_ARRAY)
 		encl = epc_page->owner;
 	else
-		return false;
+		return sgx_virt_epc_get_ref(epc_page);
 
 	return kref_get_unless_zero(&encl->refcount);
 }
@@ -589,7 +589,7 @@ bool sgx_epc_oom(struct sgx_epc_lru *lru)
 	else if (victim->desc & SGX_EPC_PAGE_VERSION_ARRAY)
 		sgx_oom_encl(victim->owner);
 	else
-		WARN_ON_ONCE(1);
+		sgx_virt_epc_oom(victim);
 
 	return true;
 }

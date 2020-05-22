@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 
+#include <linux/file.h>
 #include <linux/miscdevice.h>
 #include <linux/mm.h>
 #include <linux/mman.h>
@@ -17,6 +18,10 @@ struct sgx_virt_epc {
 	struct radix_tree_root page_tree;
 	struct rw_semaphore lock;
 	struct mm_struct *mm;
+	struct file *file;
+	unsigned long start;
+	unsigned long end;
+	bool oom;
 };
 
 static struct mutex virt_epc_lock;
@@ -57,6 +62,9 @@ static int __sgx_virt_epc_fault(struct sgx_virt_epc *epc,
 
 	sgx_record_epc_page(epc_page, 0);
 
+	epc->start = min(epc->start, addr);
+	epc->end = max(epc->end, addr + PAGE_SIZE);
+
 	return 0;
 
 err_delete:
@@ -71,6 +79,9 @@ static vm_fault_t sgx_virt_epc_fault(struct vm_fault *vmf)
 	struct vm_area_struct *vma = vmf->vma;
 	struct sgx_virt_epc *epc = vma->vm_private_data;
 	int ret;
+
+	if (epc->oom)
+		return VM_FAULT_OOM;
 
 	down_write(&epc->lock);
 	ret = __sgx_virt_epc_fault(epc, vma, vmf->address);
@@ -115,7 +126,7 @@ static int sgx_virt_epc_access(struct vm_area_struct *vma, unsigned long start,
 		 * hasn't accessed the page and therefore can't possibility
 		 * have added the page to an enclave.
 		 */
-		if (!epc_page) {
+		if (!epc_page || epc->oom) {
 			up_write(&epc->lock);
 			return -EIO;
 		}
@@ -260,6 +271,7 @@ static int sgx_virt_epc_open(struct inode *inode, struct file *file)
 	epc->mm = current->mm;
 	init_rwsem(&epc->lock);
 	INIT_RADIX_TREE(&epc->page_tree, GFP_KERNEL);
+	epc->file = file;
 
 	file->private_data = epc;
 
@@ -286,6 +298,50 @@ int __init sgx_virt_epc_init(void)
 	mutex_init(&virt_epc_lock);
 
 	return misc_register(&sgx_virt_epc_dev);
+}
+
+bool sgx_virt_epc_get_ref(struct sgx_epc_page *epc_page)
+{
+	struct sgx_virt_epc *epc = epc_page->owner;
+
+	return get_file_rcu(epc->file);
+}
+
+void sgx_virt_epc_oom(struct sgx_epc_page *epc_page)
+{
+	struct sgx_virt_epc *epc = epc_page->owner;
+	struct mm_struct *mm = epc->mm;
+	struct radix_tree_iter iter;
+	void **slot;
+
+	if (!mmget_not_zero(mm))
+		goto out;
+
+	mmap_read_lock(mm);
+
+	down_write(&epc->lock);
+	if (epc->oom) {
+		up_write(&epc->lock);
+		goto out_unlock;
+	}
+	epc->oom = true;
+
+	sgx_epc_oom_zap(epc, mm, epc->start, epc->end, &sgx_virt_epc_vm_ops);
+
+	radix_tree_for_each_slot(slot, &epc->page_tree, &iter, 0) {
+		if (sgx_virt_epc_free_page(*slot))
+			continue;
+
+		radix_tree_delete(&epc->page_tree, iter.index);
+	}
+
+	up_write(&epc->lock);
+
+out_unlock:
+	mmap_read_unlock(mm);
+	mmput(mm);
+out:
+	fput(epc->file);
 }
 
 int sgx_virt_ecreate(struct sgx_pageinfo *pageinfo, void __user *secs,
