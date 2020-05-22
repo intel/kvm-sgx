@@ -101,7 +101,7 @@ static struct sgx_encl_page *sgx_encl_load_page(struct sgx_encl *encl,
 
 	flags = atomic_read(&encl->flags);
 
-	if ((flags & SGX_ENCL_DEAD) || !(flags & SGX_ENCL_INITIALIZED))
+	if ((flags & SGX_ENCL_DEAD_OR_OOM) || !(flags & SGX_ENCL_INITIALIZED))
 		return ERR_PTR(-EFAULT);
 
 	entry = radix_tree_lookup(&encl->page_tree, addr >> PAGE_SHIFT);
@@ -201,7 +201,7 @@ int sgx_encl_mm_add(struct sgx_encl *encl, struct mm_struct *mm)
 	/* mm_list can be accessed only by a single thread at a time. */
 	mmap_assert_write_locked(mm);
 
-	if (atomic_read(&encl->flags) & SGX_ENCL_DEAD)
+	if (atomic_read(&encl->flags) & SGX_ENCL_DEAD_OR_OOM)
 		return -EINVAL;
 
 	/*
@@ -384,7 +384,7 @@ static int sgx_vma_access(struct vm_area_struct *vma, unsigned long addr,
 	flags = atomic_read(&encl->flags);
 
 	if (!(flags & SGX_ENCL_DEBUG) || !(flags & SGX_ENCL_INITIALIZED) ||
-	    (flags & SGX_ENCL_DEAD))
+	    (flags & SGX_ENCL_DEAD_OR_OOM))
 		return -EFAULT;
 
 	for (i = 0; i < len; i += cnt) {
@@ -508,7 +508,7 @@ void sgx_encl_destroy(struct sgx_encl *encl)
 	while (!list_empty(&encl->va_pages)) {
 		va_page = list_first_entry(&encl->va_pages, struct sgx_va_page,
 					   list);
-		list_del(&va_page->list);
+		list_del_init(&va_page->list);
 		sgx_drop_epc_page(va_page->epc_page);
 		sgx_free_epc_page(va_page->epc_page);
 		kfree(va_page);

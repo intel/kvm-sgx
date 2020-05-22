@@ -406,6 +406,11 @@ static int sgx_encl_add_page(struct sgx_encl *encl, unsigned long src,
 	if (va_page)
 		list_add(&va_page->list, &encl->va_pages);
 
+	if (atomic_read(&encl->flags) & SGX_ENCL_OOM) {
+		ret = -EFAULT;
+		goto err_out_unlock;
+	}
+
 	/*
 	 * Insert prior to EADD in case of OOM.  EADD modifies MRENCLAVE, i.e.
 	 * can't be gracefully unwound, while failure on EADD/EXTEND is limited
@@ -616,6 +621,11 @@ static int sgx_encl_init(struct sgx_encl *encl, struct sgx_sigstruct *sigstruct,
 
 	mutex_lock(&encl->lock);
 
+	if (atomic_read(&encl->flags) & SGX_ENCL_OOM) {
+		ret = -EFAULT;
+		goto err_out;
+	}
+
 	/*
 	 * Periodically, EINIT polls for certain asynchronous events. If such an
 	 * event is detected, it completes with SGX_UNMSKED_EVENT.
@@ -763,7 +773,7 @@ long sgx_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 	if (encl_flags & SGX_ENCL_IOCTL)
 		return -EBUSY;
 
-	if (encl_flags & SGX_ENCL_DEAD) {
+	if (encl_flags & SGX_ENCL_DEAD_OR_OOM) {
 		ret = -EFAULT;
 		goto out;
 	}
