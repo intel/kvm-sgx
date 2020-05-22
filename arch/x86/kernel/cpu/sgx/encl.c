@@ -120,7 +120,7 @@ static struct sgx_encl_page *sgx_encl_load_page(struct sgx_encl *encl,
 		epc_page = sgx_encl_eldu(&encl->secs, NULL);
 		if (IS_ERR(epc_page))
 			return ERR_CAST(epc_page);
-		sgx_record_epc_page(epc_page, 0);
+		sgx_record_epc_page(epc_page, SGX_EPC_PAGE_ENCLAVE);
 	}
 
 	epc_page = sgx_encl_eldu(entry, encl->secs.epc_page);
@@ -128,7 +128,7 @@ static struct sgx_encl_page *sgx_encl_load_page(struct sgx_encl *encl,
 		return ERR_CAST(epc_page);
 
 	encl->secs_child_cnt++;
-	sgx_record_epc_page(entry->epc_page, SGX_EPC_PAGE_RECLAIMABLE);
+	sgx_record_epc_page(entry->epc_page, SGX_EPC_PAGE_ENCLAVE_RECLAIMABLE);
 
 	return entry;
 }
@@ -712,9 +712,10 @@ struct sgx_epc_page *sgx_alloc_va_page(struct sgx_encl *encl)
 		sgx_free_epc_page(epc_page);
 		return ERR_PTR(-EFAULT);
 	}
-	sgx_record_epc_page(epc_page, 0);
 
 	epc_page->owner = encl;
+	sgx_record_epc_page(epc_page, SGX_EPC_PAGE_VERSION_ARRAY);
+
 	return epc_page;
 }
 

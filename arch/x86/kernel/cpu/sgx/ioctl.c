@@ -179,7 +179,7 @@ static int sgx_encl_create(struct sgx_encl *encl, struct sgx_secs *secs)
 	encl->size = secs->size;
 	encl->ssaframesize = secs->ssa_frame_size;
 
-	sgx_record_epc_page(encl->secs.epc_page, 0);
+	sgx_record_epc_page(encl->secs.epc_page, SGX_EPC_PAGE_ENCLAVE);
 
 	/*
 	 * Set SGX_ENCL_CREATED only after the enclave is fully prepped.  This
@@ -436,7 +436,7 @@ static int sgx_encl_add_page(struct sgx_encl *encl, unsigned long src,
 			goto err_out;
 	}
 
-	sgx_record_epc_page(encl_page->epc_page, SGX_EPC_PAGE_RECLAIMABLE);
+	sgx_record_epc_page(encl_page->epc_page, SGX_EPC_PAGE_ENCLAVE_RECLAIMABLE);
 	mutex_unlock(&encl->lock);
 	mmap_read_unlock(current->mm);
 	return ret;
