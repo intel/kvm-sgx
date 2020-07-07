@@ -19,6 +19,10 @@
 
 /**
  * enum sgx_encl_page_desc - defines bits for an enclave page's descriptor
+ * %SGX_ENCL_PAGE_RECLAIMED:		The page is in the process of being
+ *					reclaimed.
+ * %SGX_ENCL_PAGE_VA_OFFSET_MASK:	Holds the offset in the Version Array
+ *					(VA) page for a swapped page.
  * %SGX_ENCL_PAGE_ADDR_MASK:		Holds the virtual address of the page.
  *
  * The page address for SECS is zero and is used by the subsystem to recognize
@@ -26,16 +30,23 @@
  */
 enum sgx_encl_page_desc {
 	/* Bits 11:3 are available when the page is not swapped. */
+	SGX_ENCL_PAGE_RECLAIMED		= BIT(3),
+	SGX_ENCL_PAGE_VA_OFFSET_MASK	= GENMASK_ULL(11, 3),
 	SGX_ENCL_PAGE_ADDR_MASK		= PAGE_MASK,
 };
 
 #define SGX_ENCL_PAGE_ADDR(page) \
 	((page)->desc & SGX_ENCL_PAGE_ADDR_MASK)
+#define SGX_ENCL_PAGE_VA_OFFSET(page) \
+	((page)->desc & SGX_ENCL_PAGE_VA_OFFSET_MASK)
+#define SGX_ENCL_PAGE_INDEX(page) \
+	PFN_DOWN((page)->desc - (page)->encl->base)
 
 struct sgx_encl_page {
 	unsigned long desc;
 	unsigned long vm_max_prot_bits;
 	struct sgx_epc_page *epc_page;
+	struct sgx_va_page *va_page;
 	struct sgx_encl *encl;
 };
 
@@ -63,15 +74,25 @@ struct sgx_encl {
 	struct mutex lock;
 	struct list_head mm_list;
 	spinlock_t mm_lock;
+	unsigned long mm_list_version;
 	struct file *backing;
 	struct kref refcount;
 	struct srcu_struct srcu;
 	unsigned long base;
 	unsigned long size;
 	unsigned long ssaframesize;
+	struct list_head va_pages;
 	struct radix_tree_root page_tree;
 	struct sgx_encl_page secs;
 	cpumask_t cpumask;
+};
+
+#define SGX_VA_SLOT_COUNT 512
+
+struct sgx_va_page {
+	struct sgx_epc_page *epc_page;
+	DECLARE_BITMAP(slots, SGX_VA_SLOT_COUNT);
+	struct list_head list;
 };
 
 extern const struct vm_operations_struct sgx_vm_ops;
@@ -83,5 +104,25 @@ void sgx_encl_release(struct kref *ref);
 int sgx_encl_mm_add(struct sgx_encl *encl, struct mm_struct *mm);
 int sgx_encl_may_map(struct sgx_encl *encl, unsigned long start,
 		     unsigned long end, unsigned long vm_prot_bits);
+
+struct sgx_backing {
+	pgoff_t page_index;
+	struct page *contents;
+	struct page *pcmd;
+	unsigned long pcmd_offset;
+};
+
+int sgx_encl_get_backing(struct sgx_encl *encl, unsigned long page_index,
+			 struct sgx_backing *backing);
+void sgx_encl_put_backing(struct sgx_backing *backing, bool do_write);
+int sgx_encl_test_and_clear_young(struct mm_struct *mm,
+				  struct sgx_encl_page *page);
+struct sgx_encl_page *sgx_encl_reserve_page(struct sgx_encl *encl,
+					    unsigned long addr);
+
+struct sgx_epc_page *sgx_alloc_va_page(void);
+unsigned int sgx_alloc_va_slot(struct sgx_va_page *va_page);
+void sgx_free_va_slot(struct sgx_va_page *va_page, unsigned int offset);
+bool sgx_va_page_full(struct sgx_va_page *va_page);
 
 #endif /* _X86_ENCL_H */
