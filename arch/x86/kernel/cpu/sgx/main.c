@@ -697,6 +697,14 @@ static bool __init sgx_page_cache_init(void)
 	return true;
 }
 
+void sgx_update_lepubkeyhash(u64 *lepubkeyhash)
+{
+	int i;
+
+	for (i = 0; i < 4; i++)
+		wrmsrl(MSR_IA32_SGXLEPUBKEYHASH0 + i, lepubkeyhash[i]);
+}
+
 static void __init sgx_init(void)
 {
 	int ret;
