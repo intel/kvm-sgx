@@ -96,7 +96,6 @@ static void init_vmx_capabilities(struct cpuinfo_x86 *c)
 static void clear_sgx_caps(void)
 {
 	setup_clear_cpu_cap(X86_FEATURE_SGX);
-	setup_clear_cpu_cap(X86_FEATURE_SGX_LC);
 }
 
 static int __init nosgx(char *str)
