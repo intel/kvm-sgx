@@ -78,7 +78,7 @@ static struct sgx_epc_page *sgx_encl_eldu(struct sgx_encl_page *encl_page,
 
 	ret = __sgx_encl_eldu(encl_page, epc_page, secs_page);
 	if (ret) {
-		sgx_free_epc_page(epc_page);
+		sgx_encl_free_epc_page(epc_page);
 		return ERR_PTR(ret);
 	}
 
@@ -404,7 +404,7 @@ void sgx_encl_release(struct kref *ref)
 			if (sgx_unmark_page_reclaimable(entry->epc_page))
 				continue;
 
-			sgx_free_epc_page(entry->epc_page);
+			sgx_encl_free_epc_page(entry->epc_page);
 			encl->secs_child_cnt--;
 			entry->epc_page = NULL;
 		}
@@ -415,7 +415,7 @@ void sgx_encl_release(struct kref *ref)
 	xa_destroy(&encl->page_array);
 
 	if (!encl->secs_child_cnt && encl->secs.epc_page) {
-		sgx_free_epc_page(encl->secs.epc_page);
+		sgx_encl_free_epc_page(encl->secs.epc_page);
 		encl->secs.epc_page = NULL;
 	}
 
@@ -423,7 +423,7 @@ void sgx_encl_release(struct kref *ref)
 		va_page = list_first_entry(&encl->va_pages, struct sgx_va_page,
 					   list);
 		list_del(&va_page->list);
-		sgx_free_epc_page(va_page->epc_page);
+		sgx_encl_free_epc_page(va_page->epc_page);
 		kfree(va_page);
 	}
 
@@ -686,7 +686,7 @@ struct sgx_epc_page *sgx_alloc_va_page(void)
 	ret = __epa(sgx_get_epc_virt_addr(epc_page));
 	if (ret) {
 		WARN_ONCE(1, "EPA returned %d (0x%x)", ret, ret);
-		sgx_free_epc_page(epc_page);
+		sgx_encl_free_epc_page(epc_page);
 		return ERR_PTR(-EFAULT);
 	}
 
@@ -734,4 +734,34 @@ bool sgx_va_page_full(struct sgx_va_page *va_page)
 	int slot = find_first_zero_bit(va_page->slots, SGX_VA_SLOT_COUNT);
 
 	return slot == SGX_VA_SLOT_COUNT;
+}
+
+/**
+ * sgx_encl_free_epc_page - free EPC page assigned to an enclave
+ * @epc_page:	EPC page to be freed
+ *
+ * Free EPC page assigned to an enclave.  It does EREMOVE for the page, and
+ * only upon success, it puts the page back to free page list.  Otherwise, it
+ * gives a WARNING to indicate page is leaked, and require reboot to retrieve
+ * leaked pages.
+ */
+void sgx_encl_free_epc_page(struct sgx_epc_page *epc_page)
+{
+	int ret;
+
+	WARN_ON_ONCE(epc_page->flags & SGX_EPC_PAGE_RECLAIMER_TRACKED);
+
+	/*
+	 * Give a message to remind EPC page is leaked when EREMOVE fails,
+	 * and requires machine reboot to get leaked pages back. This can
+	 * be improved in future by adding stats of leaked pages, etc.
+	 */
+#define EREMOVE_ERROR_MESSAGE \
+	"EREMOVE returned %d (0x%x).  EPC page leaked.  Reboot required to retrieve leaked pages."
+	ret = __eremove(sgx_get_epc_virt_addr(epc_page));
+	if (WARN_ONCE(ret, EREMOVE_ERROR_MESSAGE, ret, ret))
+		return;
+#undef EREMOVE_ERROR_MESSAGE
+
+	sgx_free_epc_page(epc_page);
 }
